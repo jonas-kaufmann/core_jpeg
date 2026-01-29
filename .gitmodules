@@ -1,0 +1,6 @@
+[submodule "src_v/axi"]
+	path = src_v/axi
+	url = git@github.com:alexforencich/verilog-axi.git
+[submodule "src_v/axis"]
+	path = src_v/axis
+	url = https://github.com/alexforencich/verilog-axis.git
