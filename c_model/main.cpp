@@ -1,3 +1,5 @@
+#include <chrono>
+#include <iostream>
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
@@ -299,6 +301,8 @@ int main(int argc, char* argv[])
         return -1;
     }
 
+    std::chrono::time_point start = std::chrono::high_resolution_clock::now();
+
     m_dqt.reset();
     m_dht.reset();
     m_idct.reset();
@@ -537,6 +541,12 @@ int main(int argc, char* argv[])
 
         last_b = b;
     }
+
+    std::chrono::duration duration = std::chrono::high_resolution_clock::now() - start;
+    std::cout << "Pure decode duration: "
+              << std::chrono::duration_cast<std::chrono::microseconds>(duration)
+                     .count()
+              << "us\n";
 
     if (decode_done)
     {
