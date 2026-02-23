@@ -1,0 +1,13 @@
+`ifndef JPEG_PARAMS_SVH
+`define JPEG_PARAMS_SVH
+
+`define JPEG_MMIO_BITS_ADDR 32
+
+`define JPEG_DMA_BYTES_DATA 64
+`define JPEG_DMA_BITS_DATA (`JPEG_DMA_BYTES_DATA * 8)
+
+`define JPEG_DMA_BITS_LEN 8
+`define JPEG_DMA_BITS_ID 8
+`define JPEG_DMA_BITS_ADDR 64
+
+`endif

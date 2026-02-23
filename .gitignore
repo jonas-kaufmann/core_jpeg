@@ -1,0 +1,6 @@
+.cache/clangd/
+compile_commands.json
+
+src_simbricks/.cache
+src_simbricks/jpeg_rtl_sim_*
+src_simbricks/obj_dir/
