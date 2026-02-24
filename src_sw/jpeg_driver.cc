@@ -151,7 +151,8 @@ static void print_buffer(const void *data, size_t size) {
   std::cout.copyfmt(old_state);  // restore formatting
 }
 
-bool decode_image(const char *img) {
+bool load_image(const char *img, size_t *size_out, void **dmabuf_out,
+                uintptr_t *dmabuf_paddr_out) {
   std::chrono::time_point start_prepare =
       std::chrono::high_resolution_clock::now();
 
@@ -162,19 +163,19 @@ bool decode_image(const char *img) {
   }
 
   // Get size
-  size_t src_size;
+  size_t size;
   fseek(f, 0, SEEK_END);
-  src_size = ftell(f);
+  size = ftell(f);
   rewind(f);
 
   // Read file data in
-  void *dmabuf_src;
-  uintptr_t dmabuf_src_paddr;
-  if (!dma_buf_alloc(src_size, &dmabuf_src, &dmabuf_src_paddr)) {
+  void *dmabuf;
+  uintptr_t dmabuf_paddr;
+  if (!dma_buf_alloc(size, &dmabuf, &dmabuf_paddr)) {
     std::cerr << __func__ << "(): dma_buf_alloc failed\n";
     return false;
   }
-  fread(dmabuf_src, src_size, 1, f);
+  fread(dmabuf, size, 1, f);
   fclose(f);
 
   // Print how long loading took
@@ -186,6 +187,15 @@ bool decode_image(const char *img) {
                    .count()
             << "ns\n";
 
+  *size_out = size;
+  *dmabuf_out = dmabuf;
+  *dmabuf_paddr_out = dmabuf_paddr;
+
+  return true;
+}
+
+bool decode_image(size_t src_size, void *dmabuf_src,
+                  uintptr_t dmabuf_src_paddr) {
   // Allocate destination DMA buf
   void *dmabuf_dst;
   uintptr_t dmabuf_dst_paddr;
@@ -307,11 +317,21 @@ int main(int argc, char *argv[]) {
   }
 
   std::cout << "jpeg_driver: initialization complete, starting decode...\n";
+  size_t src_size;
+  void *dmabuf_src;
+  uintptr_t dmabuf_src_paddr;
+  if (!load_image(argv[2], &src_size, &dmabuf_src, &dmabuf_src_paddr)) {
+    std::cerr << "Loading img " << argv[2] << " failed\n";
+    return EXIT_FAILURE;
+  }
   sim_ctrl->simulation_enabled = 1;
   mmio_wmb();
-  bool success = decode_image(argv[2]);
+  bool success = decode_image(src_size, dmabuf_src, dmabuf_src_paddr);
   sim_ctrl->simulation_enabled = 0;
   mmio_wmb();
+  if (!success) {
+    std::cerr << "Decoding img " << argv[2] << " failed\n";
+  }
 
   return success ? EXIT_SUCCESS : EXIT_FAILURE;
 }
