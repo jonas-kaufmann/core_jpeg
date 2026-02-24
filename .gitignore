@@ -1,6 +1,9 @@
 .cache/clangd/
 compile_commands.json
 
+c_model/obj/
+c_model/jpeg
+
 src_simbricks/.cache
 src_simbricks/jpeg_rtl_sim_*
 src_simbricks/obj_dir/
