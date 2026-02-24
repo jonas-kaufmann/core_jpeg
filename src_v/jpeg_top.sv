@@ -650,7 +650,7 @@ module jpeg_top #(
       .inport_valid_i(core_in_valid),
       .inport_data_i(core_in_data),
       .inport_strb_i(core_in_strb),
-      .inport_last_i(core_in_last),
+      .inport_last_i(1'b0),
       .outport_accept_i(core_out_accept),
       .inport_accept_o(core_in_ready),
       .outport_valid_o(core_out_valid),
