@@ -550,12 +550,14 @@ int main(int argc, char* argv[])
 
     if (decode_done)
     {
+        long data_offset = 0;
         FILE *f = fopen(dst_image, "w");
         if (f)
         {
             fprintf(f, "P6\n");
             fprintf(f, "%d %d\n", m_width, m_height);
             fprintf(f, "255\n");
+            data_offset = ftell(f);
             for (int y=0;y<m_height;y++)
                 for (int x=0;x<m_width;x++)
                 {
@@ -569,6 +571,28 @@ int main(int argc, char* argv[])
         {
             fprintf(stderr, "ERROR: Could not write file\n");
             decode_done = false;
+        }
+
+        if (decode_done) {
+            // dump first 64 bytes similar to hexdump
+            size_t total_bytes = (size_t)m_width * (size_t)m_height * 3;
+            size_t dump_bytes = total_bytes < 64 ? total_bytes : 64;
+            uint8_t dump_buf[64] = {0};
+            size_t bytes_read = 0;
+
+            f = fopen(dst_image, "rb");
+            if (fseek(f, data_offset, SEEK_SET) == 0)
+                bytes_read = fread(dump_buf, 1, dump_bytes, f);
+            fclose(f);
+
+            printf("Decoded image bytes (first %zu):\n", bytes_read);
+            for (size_t offset = 0; offset < bytes_read; offset += 8)
+            {
+                printf("%08zx  ", offset);
+                for (size_t i = 0; i < 8 && (offset + i) < bytes_read; i++)
+                    printf("%02x ", dump_buf[offset + i]);
+                printf("\n");
+            }
         }
     }
 
