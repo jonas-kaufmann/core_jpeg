@@ -1,10 +1,12 @@
 #include "include/jpeg_driver.hh"
 
+#include <algorithm>
 #include <chrono>
 #include <condition_variable>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <iomanip>
 #include <iostream>
 #include <mutex>
 #include <queue>
@@ -33,6 +35,25 @@ inline void mmio_write_barrier() {
 
 inline std::chrono::steady_clock::time_point now_ts() {
   return std::chrono::steady_clock::now();
+}
+
+void dump_first_bytes(const void *data, size_t size) {
+  const uint8_t *bytes = static_cast<const uint8_t *>(data);
+
+  std::ios old_state(nullptr);
+  old_state.copyfmt(std::cout);
+
+  for (size_t i = 0; i < size; i += 8) {
+    std::cout << std::hex << std::setw(8) << std::setfill('0') << i << ": ";
+    const size_t line_end = std::min(i + 8, size);
+    for (size_t j = i; j < line_end; ++j) {
+      std::cout << std::hex << std::setw(2) << std::setfill('0')
+                << static_cast<unsigned>(bytes[j]) << " ";
+    }
+    std::cout << "\n";
+  }
+
+  std::cout.copyfmt(old_state);
 }
 
 bool LoadImageToDma(const char *img, const DmaBufferRef &dst_dma,
@@ -305,6 +326,15 @@ bool PostProcessThreadMain(size_t total_images, PipelineQueues *queues) {
   for (size_t i = 0; i < total_images; ++i) {
     ImageDecodedEvent task{};
     queues->decode_to_post.Pop(&task);
+
+    const size_t decoded_size = static_cast<size_t>(task.cpl.img_width) *
+                                static_cast<size_t>(task.cpl.img_height) * 3;
+    const size_t dump_size = std::min(static_cast<size_t>(64),
+                                      std::min(task.dst.size, decoded_size));
+    std::cout << "post: task_id=" << task.task_id << " first " << dump_size
+              << " bytes:\n";
+    dump_first_bytes(task.dst.vaddr, dump_size);
+
     const auto post_start = now_ts();
     for (uint32_t i = 0; i < kPostprocessSpinCycles; ++i) {
       asm volatile("" ::: "memory");
