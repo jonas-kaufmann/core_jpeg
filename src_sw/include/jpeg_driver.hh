@@ -3,6 +3,7 @@
 #include <condition_variable>
 #include <cstddef>
 #include <cstdint>
+#include <chrono>
 #include <mutex>
 #include <optional>
 #include <queue>
@@ -33,6 +34,7 @@ struct ImageDecodedEvent {
 struct DecodeInflightTask {
   uint16_t task_id = 0;
   uint32_t dst_slot = 0;
+  std::chrono::steady_clock::time_point submit_ts;
   ImageLoadedEvent src_task;
 };
 

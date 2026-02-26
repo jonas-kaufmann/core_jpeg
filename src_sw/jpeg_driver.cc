@@ -31,6 +31,10 @@ inline void mmio_write_barrier() {
   asm volatile("dmb oshst" ::: "memory");
 }
 
+inline std::chrono::steady_clock::time_point now_ts() {
+  return std::chrono::steady_clock::now();
+}
+
 bool LoadImageToDma(const char *img, const DmaBufferRef &dst_dma,
                     size_t *loaded_size_out) {
   if (dst_dma.vaddr == nullptr || dst_dma.size == 0) {
@@ -117,10 +121,17 @@ bool ImageLoaderThread(const std::vector<std::string> &image_paths,
     free_src_slots.pop();
     const DmaBufferRef &src_buf = src_pool.BufferAt(src_slot);
 
+    const auto load_start = now_ts();
     size_t src_size = 0;
     if (!LoadImageToDma(path.c_str(), src_buf, &src_size)) {
       return false;
     }
+    const auto load_end = now_ts();
+    const auto load_us = std::chrono::duration_cast<std::chrono::microseconds>(
+                             load_end - load_start)
+                             .count();
+    std::cout << "load finished: task_id=" << task_id << " path=" << path
+              << " latency_us=" << load_us << "\n";
 
     ImageLoadedEvent event{};
     event.task_id = task_id;
@@ -182,6 +193,14 @@ bool DecoderManagerThreadMain(volatile jpeg_regs *jpeg_dev,
         std::cerr << __func__ << "(): invalid dst slot in inflight state\n";
         return false;
       }
+      const auto decode_done = now_ts();
+      const auto decode_us =
+          std::chrono::duration_cast<std::chrono::microseconds>(
+              decode_done - inflight_task.submit_ts)
+              .count();
+      std::cout << "decode finished: task_id=" << inflight_task.task_id
+                << " path=" << inflight_task.src_task.image_path
+                << " latency_us=" << decode_us << "\n";
 
       ImageDecodedEvent event{};
       event.task_id = inflight_task.task_id;
@@ -237,6 +256,7 @@ bool DecoderManagerThreadMain(volatile jpeg_regs *jpeg_dev,
       DecodeInflightTask inflight_task{};
       inflight_task.task_id = src_task.task_id;
       inflight_task.dst_slot = slot;
+      inflight_task.submit_ts = now_ts();
       inflight_task.src_task = std::move(src_task);
 
       auto inserted =
@@ -285,9 +305,17 @@ bool PostProcessThreadMain(size_t total_images, PipelineQueues *queues) {
   for (size_t i = 0; i < total_images; ++i) {
     ImageDecodedEvent task{};
     queues->decode_to_post.Pop(&task);
+    const auto post_start = now_ts();
     for (uint32_t i = 0; i < kPostprocessSpinCycles; ++i) {
       asm volatile("" ::: "memory");
     }
+    const auto post_end = now_ts();
+    const auto post_us = std::chrono::duration_cast<std::chrono::microseconds>(
+                             post_end - post_start)
+                             .count();
+    std::cout << "post finished: task_id=" << task.task_id
+              << " path=" << task.image_path << " latency_us=" << post_us
+              << "\n";
     queues->released_dst_slots.Push(task.dst_slot);
   }
   return true;
