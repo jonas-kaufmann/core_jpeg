@@ -40,17 +40,23 @@ static std::unique_ptr<VerilatedSaifC> tracer;
 
 #if TRACE_ENABLED
 void create_next_trace_file(char *base_filename) {
+#if TRACE_MODE == TRACE_MODE_VCD
+  if (!tracer->isOpen()) {
+    std::ostringstream trace_file;
+    trace_file << base_filename;
+    trace_file << ".vcd";
+    tracer->open(trace_file.str().c_str());
+    return;
+  }
+  tracer->openNext(true);
+#elif TRACE_MODE == TRACE_MODE_SAIF
   tracer->close();
-
   // produce trace file name with incrementing suffix
   std::ostringstream trace_file;
   trace_file << base_filename << "_" << trace_idx_next++;
-#if TRACE_MODE == TRACE_MODE_VCD
-  trace_file << ".vcd";
-#elif TRACE_MODE == TRACE_MODE_SAIF
   trace_file << ".saif";
-#endif
   tracer->open(trace_file.str().c_str());
+#endif
 }
 #endif
 
