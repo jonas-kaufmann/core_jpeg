@@ -362,6 +362,10 @@ module jpeg_top #(
 
   logic [15:0] img_width;
   logic [15:0] img_height;
+  logic read_stream_done;
+  logic write_stream_done;
+  logic core_reset_armed;
+  logic core_reset_pulse;
 
   always_ff @(posedge clk) begin
     if (rst) begin
@@ -375,7 +379,13 @@ module jpeg_top #(
       task_id <= 16'd0;
       img_width <= 16'd0;
       img_height <= 16'd0;
+      read_stream_done <= 1'b0;
+      write_stream_done <= 1'b0;
+      core_reset_armed <= 1'b0;
+      core_reset_pulse <= 1'b0;
     end else begin
+      core_reset_pulse <= 1'b0;
+
       if (!task_active && !desc_fifo_empty) begin
         task_active <= 1'b1;
         task_src_addr <= desc_fifo_src_addr[desc_fifo_rd_ptr];
@@ -385,6 +395,9 @@ module jpeg_top #(
         read_desc_issued <= 1'b0;
         write_desc_issued <= 1'b0;
         have_dimensions <= 1'b0;
+        read_stream_done <= 1'b0;
+        write_stream_done <= 1'b0;
+        core_reset_armed <= 1'b1;
       end
 
       if (read_desc_fire) begin
@@ -401,8 +414,18 @@ module jpeg_top #(
         img_height <= core_out_height;
       end
 
+      if (dma_read_data_tvalid && dma_read_data_tready && dma_read_data_tlast) begin
+        read_stream_done <= 1'b1;
+      end
+
       if (task_done) begin
+        write_stream_done <= 1'b1;
         task_active <= 1'b0;
+      end
+
+      if (core_reset_armed && read_stream_done && write_stream_done && core_idle) begin
+        core_reset_pulse <= 1'b1;
+        core_reset_armed <= 1'b0;
       end
     end
   end
@@ -640,13 +663,14 @@ module jpeg_top #(
   wire [7:0] core_out_g;
   wire [7:0] core_out_b;
   wire core_idle;
+  wire core_rst = rst || core_reset_pulse;
   wire core_out_accept = out_fifo_tready;
 
   jpeg_core #(
       .SUPPORT_WRITABLE_DHT(JPEG_SUPPORT_WRITABLE_DHT)
   ) u_core (
       .clk_i(clk),
-      .rst_i(rst),
+      .rst_i(core_rst),
       .inport_valid_i(core_in_valid),
       .inport_data_i(core_in_data),
       .inport_strb_i(core_in_strb),
