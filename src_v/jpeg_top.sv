@@ -10,6 +10,7 @@ module jpeg_top #(
     parameter unsigned AXI_DMA_ADDR_WIDTH = 64,
     parameter unsigned AXI_DMA_DATA_WIDTH = 512,
     parameter unsigned AXI_DMA_STRB_WIDTH = AXI_DMA_DATA_WIDTH / 8,
+    parameter unsigned AXI_DMA_MAX_BURST_LEN = 16,
 
     parameter unsigned AXIL_MMIO_ADDR_WIDTH = 32
 ) (
@@ -471,7 +472,7 @@ module jpeg_top #(
       .AXI_ADDR_WIDTH(AXI_DMA_ADDR_WIDTH),
       .AXI_STRB_WIDTH(AXI_DMA_STRB_WIDTH),
       .AXI_ID_WIDTH(AXI_DMA_ID_WIDTH),
-      .AXI_MAX_BURST_LEN(16),
+      .AXI_MAX_BURST_LEN(AXI_DMA_MAX_BURST_LEN),
       .AXIS_DATA_WIDTH(AXI_DMA_DATA_WIDTH),
       .AXIS_KEEP_ENABLE(1),
       .AXIS_KEEP_WIDTH(AXI_DMA_STRB_WIDTH),
