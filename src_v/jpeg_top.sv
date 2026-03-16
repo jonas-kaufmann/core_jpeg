@@ -440,7 +440,7 @@ module jpeg_top #(
   wire write_desc_fire;
 
   wire [AXI_DMA_ADDR_WIDTH-1:0] dma_read_desc_addr = task_src_addr[AXI_DMA_ADDR_WIDTH-1:0];
-  wire [19:0] dma_read_desc_len = task_src_len[19:0];
+  wire [23:0] dma_read_desc_len = task_src_len[23:0];
   wire dma_read_desc_valid = task_active && !read_desc_issued;
   wire dma_read_desc_ready;
 
@@ -480,7 +480,7 @@ module jpeg_top #(
       .AXIS_ID_WIDTH(AXI_DMA_ID_WIDTH),
       .AXIS_DEST_ENABLE(0),
       .AXIS_USER_ENABLE(0),
-      .LEN_WIDTH(20),
+      .LEN_WIDTH(24),
       .TAG_WIDTH(8),
       .ENABLE_SG(0),
       .ENABLE_UNALIGNED(1)
