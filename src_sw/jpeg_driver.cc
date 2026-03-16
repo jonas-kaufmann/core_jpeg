@@ -1,6 +1,11 @@
 #include "include/jpeg_driver.hh"
 
+#include <fcntl.h>
+#include <sys/mman.h>
+#include <unistd.h>
+
 #include <algorithm>
+#include <cerrno>
 #include <chrono>
 #include <condition_variable>
 #include <cstdio>
@@ -8,12 +13,14 @@
 #include <cstring>
 #include <iomanip>
 #include <iostream>
+#include <memory>
 #include <mutex>
 #include <queue>
 #include <thread>
 #include <unordered_map>
 #include <vector>
 
+#include "include/jpeg_regs.hh"
 #include "include/vfio.hh"
 
 namespace jpeg {
@@ -390,17 +397,58 @@ bool init_vfio(const char *device, volatile struct jpeg_regs **jpeg_dev_out,
   return true;
 }
 
+bool init_devmem(const char *phys_addr_str,
+                 volatile struct jpeg_regs **jpeg_dev_out,
+                 volatile struct sim_ctrl_regs **sim_ctrl_out) {
+  const off_t phys_addr =
+      static_cast<off_t>(std::strtoull(phys_addr_str, nullptr, 0));
+
+  const int devmem_fd = open("/dev/mem", O_RDWR | O_SYNC);
+  if (devmem_fd < 0) {
+    std::cerr << "opening /dev/mem failed: " << std::strerror(errno) << "\n";
+    return false;
+  }
+
+  void *jpeg_map =
+      mmap(nullptr, sizeof(struct jpeg_regs), PROT_READ | PROT_WRITE,
+           MAP_SHARED, devmem_fd, phys_addr);
+  if (jpeg_map == MAP_FAILED) {
+    std::cerr << "mmap /dev/mem failed: " << std::strerror(errno) << "\n";
+    close(devmem_fd);
+    return false;
+  }
+  close(devmem_fd);
+
+  *jpeg_dev_out = static_cast<volatile struct jpeg_regs *>(jpeg_map);
+  // simulation control doesn't exist outside simulation environment so let's
+  // just map a dummy here
+  *sim_ctrl_out = new volatile sim_ctrl_regs{};
+  return true;
+}
+
 }  // namespace
 
 int main(int argc, char *argv[]) {
-  if (argc < 3) {
-    std::cerr << "usage: jpeg_driver_revamped PCI-DEVICE PATH_TO_IMAGE...\n";
+  if (argc < 4) {
+    std::cerr << "usage: jpeg_driver_revamped {vfio|devmem} DEVICE-ARG "
+                 "PATH_TO_IMAGE...\n";
     return EXIT_FAILURE;
   }
 
   volatile struct jpeg_regs *jpeg_dev = nullptr;
   volatile struct sim_ctrl_regs *sim_ctrl = nullptr;
-  if (!init_vfio(argv[1], &jpeg_dev, &sim_ctrl)) {
+  const std::string backend = argv[1];
+  if (backend == "vfio") {
+    if (!init_vfio(argv[2], &jpeg_dev, &sim_ctrl)) {
+      return EXIT_FAILURE;
+    }
+  } else if (backend == "devmem") {
+    if (!init_devmem(argv[2], &jpeg_dev, &sim_ctrl)) {
+      return EXIT_FAILURE;
+    }
+  } else {
+    std::cerr << "unknown backend '" << backend
+              << "', expected 'vfio' or 'devmem'\n";
     return EXIT_FAILURE;
   }
 
@@ -422,7 +470,7 @@ int main(int argc, char *argv[]) {
   }
 
   std::vector<std::string> image_paths;
-  for (int i = 2; i < argc; ++i) {
+  for (int i = 3; i < argc; ++i) {
     image_paths.emplace_back(argv[i]);
   }
   const size_t total_images = image_paths.size();
