@@ -2,7 +2,7 @@
 `default_nettype none
 
 module jpeg_top #(
-    parameter unsigned JPEG_SUPPORT_WRITABLE_DHT = 0,
+    parameter unsigned JPEG_SUPPORT_WRITABLE_DHT = 1,
     parameter unsigned JPEG_NUM_DECODERS = 1,
     parameter unsigned DESC_FIFO_DEPTH_LOG2 = 4,
 
