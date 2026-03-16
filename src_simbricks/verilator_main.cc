@@ -76,7 +76,7 @@ int main(int argc, char **argv, char **) {
   uint64_t next_trace_file_at_ps = sampling_period_ps;
   uint64_t trace_until = sample_length_ps;
 
-  const std::unique_ptr<VerilatedContext> contextp{new VerilatedContext};
+  std::unique_ptr<VerilatedContext> contextp{new VerilatedContext};
   contextp->commandArgs(argc, argv);
   topp = std::unique_ptr<Vjpeg_sim>(new Vjpeg_sim(contextp.get(), ""));
 
@@ -122,13 +122,17 @@ int main(int argc, char **argv, char **) {
   }
 
 #if TRACE_ENABLED
-  tracer->close();
+  tracer = nullptr;
 #endif
 
   // Execute 'final' processes
   topp->final();
   // Print statistical summary report
   contextp->statsPrintSummary();
+  
+  // Need to explicitly call destructors, otherwise get heap-use-after-free
+  topp = nullptr;
+  contextp = nullptr;
 
   return 0;
 }
