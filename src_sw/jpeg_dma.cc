@@ -14,10 +14,16 @@
 namespace jpeg {
 namespace {
 
+constexpr size_t kDefaultDmaAlignment = 1;
+
 uint8_t *g_dma_buf = nullptr;
 size_t g_dma_buf_size = 0;
 size_t g_dma_buf_off = 0;
 uintptr_t g_dma_phys_base = 0;
+
+size_t AlignUp(size_t value, size_t alignment) {
+  return (value + alignment - 1) & ~(alignment - 1);
+}
 
 bool DmaBufInit() {
   char attr[1024] = {0};
@@ -107,19 +113,35 @@ bool InitGlobalDma() {
   return DmaBufInit();
 }
 
-bool DmaBufAlloc(size_t size, DmaBufferRef *out) {
-  if (g_dma_buf == nullptr) {
+bool DmaBufAllocAligned(size_t size, size_t alignment, DmaBufferRef *out) {
+  if (g_dma_buf == nullptr || out == nullptr) {
     return false;
   }
-  if (g_dma_buf_off + size > g_dma_buf_size) {
+  if (alignment == 0 || (alignment & (alignment - 1)) != 0) {
+    std::cerr << __func__ << "(): invalid alignment " << alignment << "\n";
+    return false;
+  }
+  if ((g_dma_phys_base & (alignment - 1)) != 0) {
+    std::cerr << __func__ << "(): DMA base physical address 0x" << std::hex
+              << g_dma_phys_base << std::dec << " is not aligned to "
+              << alignment << " bytes\n";
     return false;
   }
 
-  out->vaddr = g_dma_buf + g_dma_buf_off;
-  out->paddr = g_dma_phys_base + g_dma_buf_off;
+  const size_t aligned_off = AlignUp(g_dma_buf_off, alignment);
+  if (aligned_off + size > g_dma_buf_size) {
+    return false;
+  }
+
+  out->vaddr = g_dma_buf + aligned_off;
+  out->paddr = g_dma_phys_base + aligned_off;
   out->size = size;
-  g_dma_buf_off += size;
+  g_dma_buf_off = aligned_off + size;
   return true;
+}
+
+bool DmaBufAlloc(size_t size, DmaBufferRef *out) {
+  return DmaBufAllocAligned(size, kDefaultDmaAlignment, out);
 }
 
 }  // namespace jpeg

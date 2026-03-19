@@ -15,16 +15,19 @@ struct DmaBufferRef {
   size_t size = 0;
 };
 
+bool DmaBufAllocAligned(size_t size, size_t alignment, DmaBufferRef *out);
 bool DmaBufAlloc(size_t size, DmaBufferRef *out);
 
 template <size_t kNumSlots, size_t kSlotSizeBytes>
 class BufferPool {
  public:
+  static constexpr size_t kAlignmentBytes = 128;
+
   bool InitDmaBufferPool() {
     std::lock_guard<std::mutex> lock(mu_);
     for (size_t i = 0; i < kNumSlots; ++i) {
       DmaBufferRef buf{};
-      if (!DmaBufAlloc(kSlotSizeBytes, &buf)) {
+      if (!DmaBufAllocAligned(kSlotSizeBytes, kAlignmentBytes, &buf)) {
         std::cerr << __func__ << "(): DMA pool allocation failed at slot " << i
                   << "\n";
         return false;
