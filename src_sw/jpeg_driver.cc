@@ -29,8 +29,6 @@ namespace jpeg {
 constexpr uint32_t kDecodePollSleepUs = 100;
 // decoding: how long to sleep when waiting for free descriptors
 constexpr uint32_t kDescriptorPollUs = 10;
-// post-processing: how many cycles to spin for
-constexpr uint32_t kPostprocessSpinCycles = 0;
 // decoding: timout for waiting for a free on-device descriptor
 constexpr uint32_t kDescriptorSubmitTimeoutMs = 100;
 
@@ -325,7 +323,9 @@ bool DecoderManagerThreadMain(volatile jpeg_regs *jpeg_dev,
   return true;
 }
 
-bool PostProcessThreadMain(size_t total_images, PipelineQueues *queues) {
+bool PostProcessThreadMain(size_t total_images,
+                           uint32_t postprocess_spin_cycles,
+                           PipelineQueues *queues) {
   if (queues == nullptr) {
     return false;
   }
@@ -343,7 +343,7 @@ bool PostProcessThreadMain(size_t total_images, PipelineQueues *queues) {
     dump_first_bytes(task.dst.vaddr, dump_size);
 
     const auto post_start = now_ts();
-    for (uint32_t i = 0; i < kPostprocessSpinCycles; ++i) {
+    for (uint32_t i = 0; i < postprocess_spin_cycles; ++i) {
       asm volatile("" ::: "memory");
     }
     const auto post_end = now_ts();
@@ -429,9 +429,9 @@ bool init_devmem(const char *phys_addr_str,
 }  // namespace
 
 int main(int argc, char *argv[]) {
-  if (argc < 4) {
+  if (argc < 5) {
     std::cerr << "usage: jpeg_driver_revamped {vfio|devmem} DEVICE-ARG "
-                 "PATH_TO_IMAGE...\n";
+                 "POSTPROCESS_SPIN_CYCLES PATH_TO_IMAGE...\n";
     return EXIT_FAILURE;
   }
 
@@ -452,6 +452,9 @@ int main(int argc, char *argv[]) {
     return EXIT_FAILURE;
   }
 
+  const uint32_t postprocess_spin_cycles =
+      static_cast<uint32_t>(std::strtoul(argv[3], nullptr, 0));
+
   if (!jpeg::InitGlobalDma()) {
     std::cerr << "DMA init failed\n";
     return EXIT_FAILURE;
@@ -470,7 +473,7 @@ int main(int argc, char *argv[]) {
   }
 
   std::vector<std::string> image_paths;
-  for (int i = 3; i < argc; ++i) {
+  for (int i = 4; i < argc; ++i) {
     image_paths.emplace_back(argv[i]);
   }
   const size_t total_images = image_paths.size();
@@ -506,7 +509,8 @@ int main(int argc, char *argv[]) {
     status_cv.notify_one();
   });
   std::thread post_thr([&]() {
-    const bool ok = jpeg::PostProcessThreadMain(total_images, &queues);
+    const bool ok = jpeg::PostProcessThreadMain(
+        total_images, postprocess_spin_cycles, &queues);
     {
       std::lock_guard<std::mutex> lock(status_mu);
       post_ok = ok;

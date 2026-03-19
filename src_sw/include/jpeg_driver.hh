@@ -74,7 +74,9 @@ bool DecoderManagerThreadMain(volatile jpeg_regs *jpeg_dev,
                               const DstBufferPool &dst_pool,
                               size_t total_images, PipelineQueues *queues);
 
-bool PostProcessThreadMain(size_t total_images, PipelineQueues *queues);
+bool PostProcessThreadMain(size_t total_images,
+                           uint32_t postprocess_spin_cycles,
+                           PipelineQueues *queues);
 
 // Decoder thread helpers.
 std::optional<jpeg_cpl_entry> TryPopCompletion(volatile jpeg_regs *jpeg_dev);
