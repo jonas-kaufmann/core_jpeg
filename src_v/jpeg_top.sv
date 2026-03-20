@@ -484,7 +484,7 @@ module jpeg_top #(
       .LEN_WIDTH(24),
       .TAG_WIDTH(8),
       .ENABLE_SG(0),
-      .ENABLE_UNALIGNED(1)
+      .ENABLE_UNALIGNED(0)
   ) dma_inst (
       .clk(clk),
       .rst(rst),
