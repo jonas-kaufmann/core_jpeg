@@ -5,7 +5,8 @@ module jpeg_top #(
     parameter unsigned JPEG_SUPPORT_WRITABLE_DHT = 1,
     parameter unsigned JPEG_NUM_DECODERS = 1,
     parameter unsigned DESC_FIFO_DEPTH_LOG2 = 4,
-    parameter unsigned INPUT_FIFO_SLOTS = 1024,
+    parameter unsigned INPUT_FIFO_SLOTS = 32,
+    parameter unsigned OUTPUT_FIFO_SLOTS = 64,
 
     parameter unsigned AXI_DMA_ID_WIDTH = 8,
     parameter unsigned AXI_DMA_ADDR_WIDTH = 64,
@@ -89,7 +90,9 @@ module jpeg_top #(
   localparam int AXIS_KEEP_WIDTH = AXI_DMA_STRB_WIDTH;
   localparam logic [DESC_FIFO_DEPTH_LOG2:0] DESC_FIFO_DEPTH = (1 << DESC_FIFO_DEPTH_LOG2);
   localparam int INPUT_FIFO_DEPTH_BYTES = INPUT_FIFO_SLOTS * AXI_DMA_STRB_WIDTH;
-  localparam int AXI_DMA_LEN_WIDTH = $clog2(INPUT_FIFO_DEPTH_BYTES + 1);
+  localparam int OUTPUT_FIFO_DEPTH_BYTES = OUTPUT_FIFO_SLOTS * AXI_DMA_STRB_WIDTH;
+  localparam int AXI_DMA_BYTES_MAX = AXI_DMA_STRB_WIDTH * AXI_DMA_MAX_BURST_LEN;
+  localparam int AXI_DMA_LEN_WIDTH = $clog2(AXI_DMA_BYTES_MAX + 1);
 
   // Verify parameters
   generate
@@ -98,6 +101,16 @@ module jpeg_top #(
         $fatal(1, "Parameter AXI_DMA_STRB_WIDTH (%0d) must be a power of two", AXI_DMA_STRB_WIDTH);
     end
   endgenerate
+
+  function automatic [$clog2(AXIS_KEEP_WIDTH + 1)-1:0] axis_keep_count(input logic [AXIS_KEEP_WIDTH-1:0] keep);
+    int i;
+    begin
+      axis_keep_count = '0;
+      for (i = 0; i < AXIS_KEEP_WIDTH; i = i + 1) begin
+        axis_keep_count = axis_keep_count + keep[i];
+      end
+    end
+  endfunction
 
   // --------------------------------------------------------------------------
   // MMIO register map (byte offsets)
@@ -364,13 +377,17 @@ module jpeg_top #(
 
   logic task_active;
   logic read_chunk_active;
-  logic write_desc_issued;
+  logic write_chunk_active;
+  logic write_chunk_data_done;
   logic have_dimensions;
 
   logic [63:0] task_src_addr;
   logic [63:0] task_src_len;
   logic [63:0] task_dst_addr;
   logic [63:0] read_chunk_len;
+  logic [63:0] write_bytes_remaining;
+  logic [63:0] write_chunk_len;
+  logic [$clog2(AXIS_KEEP_WIDTH + 1)+AXI_DMA_LEN_WIDTH-1:0] write_chunk_bytes_sent;
   logic [15:0] task_id;
 
   logic [15:0] img_width;
@@ -384,12 +401,16 @@ module jpeg_top #(
     if (rst) begin
       task_active <= 1'b0;
       read_chunk_active <= 1'b0;
-      write_desc_issued <= 1'b0;
+      write_chunk_active <= 1'b0;
+      write_chunk_data_done <= 1'b0;
       have_dimensions <= 1'b0;
       task_src_addr <= 64'd0;
       task_src_len <= 64'd0;
       task_dst_addr <= 64'd0;
       read_chunk_len <= 64'd0;
+      write_bytes_remaining <= 64'd0;
+      write_chunk_len <= 64'd0;
+      write_chunk_bytes_sent <= '0;
       task_id <= 16'd0;
       img_width <= 16'd0;
       img_height <= 16'd0;
@@ -407,8 +428,12 @@ module jpeg_top #(
         task_dst_addr <= desc_fifo_dst_addr[desc_fifo_rd_ptr];
         task_id <= desc_fifo_id[desc_fifo_rd_ptr];
         read_chunk_active <= 1'b0;
-        write_desc_issued <= 1'b0;
+        write_chunk_active <= 1'b0;
+        write_chunk_data_done <= 1'b0;
         have_dimensions <= 1'b0;
+        write_bytes_remaining <= 64'd0;
+        write_chunk_len <= 64'd0;
+        write_chunk_bytes_sent <= '0;
         read_stream_done <= (desc_fifo_src_len[desc_fifo_rd_ptr] == 64'd0);
         write_stream_done <= 1'b0;
         core_reset_armed <= 1'b1;
@@ -420,13 +445,17 @@ module jpeg_top #(
       end
 
       if (write_desc_fire) begin
-        write_desc_issued <= 1'b1;
+        write_chunk_active <= 1'b1;
+        write_chunk_data_done <= 1'b0;
+        write_chunk_len <= next_write_desc_len;
+        write_chunk_bytes_sent <= '0;
       end
 
       if (capture_dimensions) begin
         have_dimensions <= 1'b1;
         img_width <= core_out_width;
         img_height <= core_out_height;
+        write_bytes_remaining <= capture_byte_count;
       end
 
       if (dma_read_data_tvalid && dma_read_data_tready && dma_read_data_tlast) begin
@@ -436,9 +465,24 @@ module jpeg_top #(
         read_stream_done <= (task_src_len == read_chunk_len);
       end
 
-      if (task_done) begin
-        write_stream_done <= 1'b1;
-        task_active <= 1'b0;
+      if (dma_write_data_fire) begin
+        write_chunk_bytes_sent <= write_chunk_bytes_sent + out_fifo_tkeep_count;
+        if (dma_write_data_tlast) begin
+          write_chunk_data_done <= 1'b1;
+        end
+      end
+
+      if (dma_write_desc_status_valid) begin
+        task_dst_addr <= task_dst_addr + write_chunk_len;
+        write_bytes_remaining <= write_bytes_remaining - write_chunk_len;
+        write_chunk_active <= 1'b0;
+        write_chunk_data_done <= 1'b0;
+        write_chunk_len <= 64'd0;
+        write_chunk_bytes_sent <= '0;
+        write_stream_done <= (write_bytes_remaining == write_chunk_len);
+        if (write_bytes_remaining == write_chunk_len) begin
+          task_active <= 1'b0;
+        end
       end
 
       if (core_reset_armed && read_stream_done && write_stream_done && core_idle) begin
@@ -473,12 +517,21 @@ INPUT_FIFO_DEPTH_BYTES
   wire dma_read_desc_valid = can_issue_read_desc;
   wire dma_read_desc_ready;
 
+  wire [$clog2(OUTPUT_FIFO_DEPTH_BYTES):0] output_fifo_occupied_len;
   wire [AXI_DMA_ADDR_WIDTH-1:0] dma_write_desc_addr = task_dst_addr[AXI_DMA_ADDR_WIDTH-1:0];
-  wire [31:0] pixel_count = {16'd0, img_width} * {16'd0, img_height};
-  wire [31:0] byte_count = pixel_count * 3;
-  wire [AXI_DMA_LEN_WIDTH-1:0] dma_write_desc_len = byte_count[AXI_DMA_LEN_WIDTH-1:0];
-  wire dma_write_desc_valid = task_active && have_dimensions && !write_desc_issued;
+  wire [31:0] capture_pixel_count = {16'd0, core_out_width} * {16'd0, core_out_height};
+  wire [31:0] capture_byte_count = capture_pixel_count * 3;
+  // output_fifo reports occupancy in DMA-width slots, so a partial final beat still counts as one full slot.
+  wire can_issue_write_desc = task_active && have_dimensions && !write_stream_done && !write_chunk_active
+      && (write_bytes_remaining != 0) && (output_fifo_occupied_len >= AXI_DMA_STRB_WIDTH);
+  wire [63:0] write_bytes_remaining_aligned = write_bytes_remaining & ~(AXI_DMA_STRB_WIDTH - 1);
+  wire [63:0] next_write_desc_len = write_bytes_remaining > AXI_DMA_BYTES_MAX ? AXI_DMA_BYTES_MAX
+      : write_bytes_remaining_aligned != 0 ? write_bytes_remaining_aligned : write_bytes_remaining;
+  wire [AXI_DMA_LEN_WIDTH-1:0] dma_write_desc_len = next_write_desc_len[AXI_DMA_LEN_WIDTH-1:0];
+  wire dma_write_desc_valid = can_issue_write_desc;
   wire dma_write_desc_ready;
+  wire [AXI_DMA_LEN_WIDTH-1:0] dma_write_desc_status_len;
+  wire dma_write_desc_status_valid;
 
   assign read_desc_fire  = dma_read_desc_valid && dma_read_desc_ready;
   assign write_desc_fire = dma_write_desc_valid && dma_write_desc_ready;
@@ -540,13 +593,13 @@ INPUT_FIFO_DEPTH_BYTES
       .s_axis_write_desc_tag(8'd0),
       .s_axis_write_desc_valid(dma_write_desc_valid),
       .s_axis_write_desc_ready(dma_write_desc_ready),
-      .m_axis_write_desc_status_len(),
+      .m_axis_write_desc_status_len(dma_write_desc_status_len),
       .m_axis_write_desc_status_tag(),
       .m_axis_write_desc_status_id(),
       .m_axis_write_desc_status_dest(),
       .m_axis_write_desc_status_user(),
       .m_axis_write_desc_status_error(),
-      .m_axis_write_desc_status_valid(),
+      .m_axis_write_desc_status_valid(dma_write_desc_status_valid),
       .s_axis_write_data_tdata(dma_write_data_tdata),
       .s_axis_write_data_tkeep(dma_write_data_tkeep),
       .s_axis_write_data_tvalid(dma_write_data_tvalid),
@@ -768,7 +821,7 @@ INPUT_FIFO_DEPTH_BYTES
   );
 
   axis_fifo #(
-      .DEPTH(2048),
+      .DEPTH(OUTPUT_FIFO_DEPTH_BYTES),
       .DATA_WIDTH(AXIS_DATA_WIDTH),
       .KEEP_ENABLE(1),
       .KEEP_WIDTH(AXIS_KEEP_WIDTH),
@@ -800,23 +853,28 @@ INPUT_FIFO_DEPTH_BYTES
       .m_axis_tuser(),
       .pause_req(1'b0),
       .pause_ack(),
-      .status_depth(),
+      .status_depth(output_fifo_occupied_len),
       .status_depth_commit(),
       .status_overflow(),
       .status_bad_frame(),
       .status_good_frame()
   );
 
-  assign out_adapter_tready = core_out_accept;
+  wire [$clog2(AXIS_KEEP_WIDTH + 1)-1:0] out_fifo_tkeep_count = axis_keep_count(out_fifo_tkeep);
+  wire dma_write_data_fire = dma_write_data_tvalid && dma_write_data_tready;
+  wire dma_write_data_last = write_chunk_active && !write_chunk_data_done
+      && (write_chunk_bytes_sent + out_fifo_tkeep_count == write_chunk_len);
+  wire task_done = dma_write_desc_status_valid && (write_bytes_remaining == write_chunk_len);
+
+  assign core_out_accept = out_adapter_tready;
   assign dma_write_data_tdata = out_fifo_tdata;
   assign dma_write_data_tkeep = out_fifo_tkeep;
-  assign dma_write_data_tvalid = out_fifo_tvalid;
-  assign dma_write_data_tlast = out_fifo_tlast;
+  assign dma_write_data_tvalid = out_fifo_tvalid && write_chunk_active && !write_chunk_data_done;
+  assign dma_write_data_tlast = dma_write_data_last;
 
-  assign out_fifo_tready_dma = write_desc_issued ? dma_write_data_tready : 1'b0;
+  assign out_fifo_tready_dma = write_chunk_active && !write_chunk_data_done && dma_write_data_tready;
 
   wire capture_dimensions = core_out_valid && core_out_accept && !have_dimensions;
-  wire task_done = dma_write_data_tvalid && dma_write_data_tready && dma_write_data_tlast;
 
   // --------------------------------------------------------------------------
   // Completion push
