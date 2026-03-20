@@ -5,8 +5,9 @@ module jpeg_top #(
     parameter unsigned JPEG_SUPPORT_WRITABLE_DHT = 1,
     parameter unsigned JPEG_NUM_DECODERS = 1,
     parameter unsigned DESC_FIFO_DEPTH_LOG2 = 4,
+    parameter unsigned INPUT_FIFO_SLOTS = 1024,
 
-    parameter unsigned AXI_DMA_ID_WIDTH   = 8,
+    parameter unsigned AXI_DMA_ID_WIDTH = 8,
     parameter unsigned AXI_DMA_ADDR_WIDTH = 64,
     parameter unsigned AXI_DMA_DATA_WIDTH = 512,
     parameter unsigned AXI_DMA_STRB_WIDTH = AXI_DMA_DATA_WIDTH / 8,
@@ -87,6 +88,16 @@ module jpeg_top #(
   localparam int AXIS_DATA_WIDTH = AXI_DMA_DATA_WIDTH;
   localparam int AXIS_KEEP_WIDTH = AXI_DMA_STRB_WIDTH;
   localparam logic [DESC_FIFO_DEPTH_LOG2:0] DESC_FIFO_DEPTH = (1 << DESC_FIFO_DEPTH_LOG2);
+  localparam int INPUT_FIFO_DEPTH_BYTES = INPUT_FIFO_SLOTS * AXI_DMA_STRB_WIDTH;
+  localparam int AXI_DMA_LEN_WIDTH = $clog2(INPUT_FIFO_DEPTH_BYTES + 1);
+
+  // Verify parameters
+  generate
+    if ((AXI_DMA_STRB_WIDTH & (AXI_DMA_STRB_WIDTH - 1)) != 0) begin : gen_verify_param_axi_dma_strb_width
+      initial
+        $fatal(1, "Parameter AXI_DMA_STRB_WIDTH (%0d) must be a power of two", AXI_DMA_STRB_WIDTH);
+    end
+  endgenerate
 
   // --------------------------------------------------------------------------
   // MMIO register map (byte offsets)
@@ -352,13 +363,14 @@ module jpeg_top #(
   // --------------------------------------------------------------------------
 
   logic task_active;
-  logic read_desc_issued;
+  logic read_chunk_active;
   logic write_desc_issued;
   logic have_dimensions;
 
   logic [63:0] task_src_addr;
   logic [63:0] task_src_len;
   logic [63:0] task_dst_addr;
+  logic [63:0] read_chunk_len;
   logic [15:0] task_id;
 
   logic [15:0] img_width;
@@ -371,12 +383,13 @@ module jpeg_top #(
   always_ff @(posedge clk) begin
     if (rst) begin
       task_active <= 1'b0;
-      read_desc_issued <= 1'b0;
+      read_chunk_active <= 1'b0;
       write_desc_issued <= 1'b0;
       have_dimensions <= 1'b0;
       task_src_addr <= 64'd0;
       task_src_len <= 64'd0;
       task_dst_addr <= 64'd0;
+      read_chunk_len <= 64'd0;
       task_id <= 16'd0;
       img_width <= 16'd0;
       img_height <= 16'd0;
@@ -393,16 +406,17 @@ module jpeg_top #(
         task_src_len <= desc_fifo_src_len[desc_fifo_rd_ptr];
         task_dst_addr <= desc_fifo_dst_addr[desc_fifo_rd_ptr];
         task_id <= desc_fifo_id[desc_fifo_rd_ptr];
-        read_desc_issued <= 1'b0;
+        read_chunk_active <= 1'b0;
         write_desc_issued <= 1'b0;
         have_dimensions <= 1'b0;
-        read_stream_done <= 1'b0;
+        read_stream_done <= (desc_fifo_src_len[desc_fifo_rd_ptr] == 64'd0);
         write_stream_done <= 1'b0;
         core_reset_armed <= 1'b1;
       end
 
       if (read_desc_fire) begin
-        read_desc_issued <= 1'b1;
+        read_chunk_active <= 1'b1;
+        read_chunk_len <= next_read_desc_len;
       end
 
       if (write_desc_fire) begin
@@ -416,7 +430,10 @@ module jpeg_top #(
       end
 
       if (dma_read_data_tvalid && dma_read_data_tready && dma_read_data_tlast) begin
-        read_stream_done <= 1'b1;
+        task_src_addr <= task_src_addr + read_chunk_len;
+        task_src_len <= task_src_len - read_chunk_len;
+        read_chunk_active <= 1'b0;
+        read_stream_done <= (task_src_len == read_chunk_len);
       end
 
       if (task_done) begin
@@ -440,15 +457,26 @@ module jpeg_top #(
   wire read_desc_fire;
   wire write_desc_fire;
 
+  wire [$clog2(INPUT_FIFO_DEPTH_BYTES):0] input_fifo_occupied_len;
+  // `& ~(AXI_DMA_STRB_WIDTH - 1)` ensures the number of bytes free in FIFO represent full slots
+  wire [$clog2(
+INPUT_FIFO_DEPTH_BYTES
+):0] input_fifo_free_bytes = (INPUT_FIFO_DEPTH_BYTES -
+                              input_fifo_occupied_len) & ~(AXI_DMA_STRB_WIDTH - 1);
+  wire can_issue_read_desc = task_active && !read_stream_done && !read_chunk_active
+      && (task_src_len != 0) && (input_fifo_free_bytes != 0);
+  wire [63:0] next_read_desc_len = task_src_len > AXI_DMA_BYTES_MAX ? AXI_DMA_BYTES_MAX
+      : task_src_len < input_fifo_free_bytes ? task_src_len : input_fifo_free_bytes;
+
   wire [AXI_DMA_ADDR_WIDTH-1:0] dma_read_desc_addr = task_src_addr[AXI_DMA_ADDR_WIDTH-1:0];
-  wire [23:0] dma_read_desc_len = task_src_len[23:0];
-  wire dma_read_desc_valid = task_active && !read_desc_issued;
+  wire [AXI_DMA_LEN_WIDTH-1:0] dma_read_desc_len = next_read_desc_len[AXI_DMA_LEN_WIDTH-1:0];
+  wire dma_read_desc_valid = can_issue_read_desc;
   wire dma_read_desc_ready;
 
   wire [AXI_DMA_ADDR_WIDTH-1:0] dma_write_desc_addr = task_dst_addr[AXI_DMA_ADDR_WIDTH-1:0];
   wire [31:0] pixel_count = {16'd0, img_width} * {16'd0, img_height};
   wire [31:0] byte_count = pixel_count * 3;
-  wire [19:0] dma_write_desc_len = byte_count[19:0];
+  wire [AXI_DMA_LEN_WIDTH-1:0] dma_write_desc_len = byte_count[AXI_DMA_LEN_WIDTH-1:0];
   wire dma_write_desc_valid = task_active && have_dimensions && !write_desc_issued;
   wire dma_write_desc_ready;
 
@@ -481,7 +509,7 @@ module jpeg_top #(
       .AXIS_ID_WIDTH(AXI_DMA_ID_WIDTH),
       .AXIS_DEST_ENABLE(0),
       .AXIS_USER_ENABLE(0),
-      .LEN_WIDTH(24),
+      .LEN_WIDTH(AXI_DMA_LEN_WIDTH),
       .TAG_WIDTH(8),
       .ENABLE_SG(0),
       .ENABLE_UNALIGNED(0)
@@ -578,7 +606,7 @@ module jpeg_top #(
   wire in_fifo_tlast;
 
   axis_fifo #(
-      .DEPTH(1024),
+      .DEPTH(INPUT_FIFO_DEPTH_BYTES),
       .DATA_WIDTH(AXIS_DATA_WIDTH),
       .KEEP_ENABLE(1),
       .KEEP_WIDTH(AXIS_KEEP_WIDTH),
@@ -610,7 +638,7 @@ module jpeg_top #(
       .m_axis_tuser(),
       .pause_req(1'b0),
       .pause_ack(),
-      .status_depth(),
+      .status_depth(input_fifo_occupied_len),
       .status_depth_commit(),
       .status_overflow(),
       .status_bad_frame(),
