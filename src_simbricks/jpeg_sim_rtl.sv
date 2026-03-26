@@ -133,7 +133,7 @@ module jpeg_sim (
   );
 
   // instantiate main module
-  jpeg_shell jpeg_shell_inst (
+  jpeg_top_bd jpeg_top_bd_inst (
       .*,
       // unused
       .m_axi_awlock(),

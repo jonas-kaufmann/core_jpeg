@@ -1,20 +1,21 @@
 `timescale 1ns / 1ps
+`include "jpeg_params.vh"
 `default_nettype none
 
 module jpeg_top #(
-    parameter unsigned JPEG_SUPPORT_WRITABLE_DHT = 1,
+    parameter unsigned JPEG_SUPPORT_WRITABLE_DHT = `JPEG_SUPPORT_WRITABLE_DHT,
     parameter unsigned JPEG_NUM_DECODERS = 1,
     parameter unsigned DESC_FIFO_DEPTH_LOG2 = 4,
     parameter unsigned INPUT_FIFO_SLOTS = 32,
     parameter unsigned OUTPUT_FIFO_SLOTS = 64,
 
-    parameter unsigned AXI_DMA_ID_WIDTH = 8,
-    parameter unsigned AXI_DMA_ADDR_WIDTH = 64,
-    parameter unsigned AXI_DMA_DATA_WIDTH = 512,
-    parameter unsigned AXI_DMA_STRB_WIDTH = AXI_DMA_DATA_WIDTH / 8,
-    parameter unsigned AXI_DMA_MAX_BURST_LEN = 16,
+    parameter unsigned AXI_DMA_ID_WIDTH = `JPEG_DMA_BITS_ID,
+    parameter unsigned AXI_DMA_ADDR_WIDTH = `JPEG_DMA_BITS_ADDR,
+    parameter unsigned AXI_DMA_DATA_WIDTH = `JPEG_DMA_BITS_DATA,
+    parameter unsigned AXI_DMA_STRB_WIDTH = `JPEG_DMA_BITS_DATA / 8,
+    parameter unsigned AXI_DMA_MAX_BURST_LEN = `JPEG_DMA_MAX_BURST_LEN,
 
-    parameter unsigned AXIL_MMIO_ADDR_WIDTH = 32
+    parameter unsigned AXIL_MMIO_ADDR_WIDTH = `JPEG_MMIO_BITS_ADDR
 ) (
     input wire clk,
     input wire rst,

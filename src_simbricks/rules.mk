@@ -29,7 +29,7 @@ $(d)jpeg_rtl_sim_no_trace: CXX := clang++-20
 $(d)jpeg_rtl_sim_no_trace: private CFLAGS := $(NO_TRACE_CFLAGS)
 $(d)jpeg_rtl_sim_no_trace: private LDFLAGS := $(BASE_LDFLAGS)
 $(d)jpeg_rtl_sim_no_trace: private VFLAGS := $(NO_TRACE_VFLAGS)
-$(d)jpeg_rtl_sim_no_trace: $(d)jpeg_sim_rtl.sv $(d)jpeg_rtl_1.sv $(d)m_axil_adapter.sv $(d)s_axi_adapter.sv $(d)verilator_adapter.cc $(d)verilator_main.cc $(abspath $(lib_simbricks))
+$(d)jpeg_rtl_sim_no_trace: $(d)jpeg_sim_rtl.sv $(d)m_axil_adapter.sv $(d)s_axi_adapter.sv $(d)verilator_adapter.cc $(d)verilator_main.cc $(abspath $(lib_simbricks))
 	verilator --top-module jpeg_sim -CFLAGS "$(CFLAGS)" -LDFLAGS "$(LDFLAGS)" $(VFLAGS)  -o $(abspath $@) $^
 
 $(d)jpeg_rtl_sim_vcd_trace: CC := clang-20
@@ -37,7 +37,7 @@ $(d)jpeg_rtl_sim_vcd_trace: CXX := clang++-20
 $(d)jpeg_rtl_sim_vcd_trace: private CFLAGS := $(VCD_TRACE_CFLAGS)
 $(d)jpeg_rtl_sim_vcd_trace: private LDFLAGS := $(BASE_LDFLAGS)
 $(d)jpeg_rtl_sim_vcd_trace: private VFLAGS := $(VCD_TRACE_VFLAGS)
-$(d)jpeg_rtl_sim_vcd_trace: $(d)jpeg_sim_rtl.sv $(d)jpeg_rtl_1.sv $(d)m_axil_adapter.sv $(d)s_axi_adapter.sv $(d)verilator_adapter.cc $(d)verilator_main.cc $(abspath $(lib_simbricks))
+$(d)jpeg_rtl_sim_vcd_trace: $(d)jpeg_sim_rtl.sv $(d)m_axil_adapter.sv $(d)s_axi_adapter.sv $(d)verilator_adapter.cc $(d)verilator_main.cc $(abspath $(lib_simbricks))
 	verilator --top-module jpeg_sim -CFLAGS "$(CFLAGS)" -LDFLAGS "$(LDFLAGS)" $(VFLAGS) -o $(abspath $@) $^
 
 $(d)jpeg_rtl_sim_saif_trace: CC := clang-20
@@ -45,7 +45,7 @@ $(d)jpeg_rtl_sim_saif_trace: CXX := clang++-20
 $(d)jpeg_rtl_sim_saif_trace: private CFLAGS := $(SAIF_TRACE_CFLAGS)
 $(d)jpeg_rtl_sim_saif_trace: private LDFLAGS := $(BASE_LDFLAGS)
 $(d)jpeg_rtl_sim_saif_trace: private VFLAGS := $(SAIF_TRACE_VFLAGS)
-$(d)jpeg_rtl_sim_saif_trace: $(d)jpeg_sim_rtl.sv $(d)jpeg_rtl_1.sv $(d)m_axil_adapter.sv $(d)s_axi_adapter.sv $(d)verilator_adapter.cc $(d)verilator_main.cc $(abspath $(lib_simbricks))
+$(d)jpeg_rtl_sim_saif_trace: $(d)jpeg_sim_rtl.sv $(d)m_axil_adapter.sv $(d)s_axi_adapter.sv $(d)verilator_adapter.cc $(d)verilator_main.cc $(abspath $(lib_simbricks))
 	verilator --top-module jpeg_sim -CFLAGS "$(CFLAGS)" -LDFLAGS "$(LDFLAGS)" $(VFLAGS) -o $(abspath $@) $^
 
 jpeg-clean:
