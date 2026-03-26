@@ -699,76 +699,39 @@ INPUT_FIFO_DEPTH_BYTES
       .status_good_frame()
   );
 
-  wire [31:0] core_in_data;
-  wire [3:0] core_in_strb;
-  wire core_in_valid;
-  wire core_in_ready;
-  wire core_in_last;
+  wire [15:0] core_out_width;
+  wire [15:0] core_out_height;
+  wire core_idle;
+  wire core_rst = rst || core_reset_pulse;
 
-  axis_adapter #(
-      .S_DATA_WIDTH(AXIS_DATA_WIDTH),
-      .S_KEEP_ENABLE(1),
-      .S_KEEP_WIDTH(AXIS_KEEP_WIDTH),
-      .M_DATA_WIDTH(32),
-      .M_KEEP_ENABLE(1),
-      .M_KEEP_WIDTH(4),
-      .ID_ENABLE(0),
-      .DEST_ENABLE(0),
-      .USER_ENABLE(0),
-      .USER_WIDTH(1)
-  ) in_adapter (
+  wire [AXIS_DATA_WIDTH-1:0] core_out_tdata;
+  wire [AXIS_KEEP_WIDTH-1:0] core_out_tkeep;
+  wire core_out_tvalid;
+  wire core_out_tready;
+  wire core_out_tlast;
+  wire core_dims_valid;
+
+  jpeg_core_wrapper #(
+      .JPEG_SUPPORT_WRITABLE_DHT(JPEG_SUPPORT_WRITABLE_DHT),
+      .AXIS_DATA_WIDTH(AXIS_DATA_WIDTH),
+      .AXIS_KEEP_WIDTH(AXIS_KEEP_WIDTH)
+  ) jpeg_core_inst (
       .clk(clk),
-      .rst(rst),
+      .rst(core_rst),
       .s_axis_tdata(in_fifo_tdata),
       .s_axis_tkeep(in_fifo_tkeep),
       .s_axis_tvalid(in_fifo_tvalid),
       .s_axis_tready(in_fifo_tready),
       .s_axis_tlast(in_fifo_tlast),
-      .s_axis_tid(),
-      .s_axis_tdest(),
-      .s_axis_tuser(),
-      .m_axis_tdata(core_in_data),
-      .m_axis_tkeep(core_in_strb),
-      .m_axis_tvalid(core_in_valid),
-      .m_axis_tready(core_in_ready),
-      .m_axis_tlast(core_in_last),
-      .m_axis_tid(),
-      .m_axis_tdest(),
-      .m_axis_tuser()
-  );
-
-  wire core_out_valid;
-  wire [15:0] core_out_width;
-  wire [15:0] core_out_height;
-  wire [15:0] core_out_x;
-  wire [15:0] core_out_y;
-  wire [7:0] core_out_r;
-  wire [7:0] core_out_g;
-  wire [7:0] core_out_b;
-  wire core_idle;
-  wire core_rst = rst || core_reset_pulse;
-  wire core_out_accept = out_fifo_tready;
-
-  jpeg_core #(
-      .SUPPORT_WRITABLE_DHT(JPEG_SUPPORT_WRITABLE_DHT)
-  ) u_core (
-      .clk_i(clk),
-      .rst_i(core_rst),
-      .inport_valid_i(core_in_valid),
-      .inport_data_i(core_in_data),
-      .inport_strb_i(core_in_strb),
-      .inport_last_i(1'b0),
-      .outport_accept_i(core_out_accept),
-      .inport_accept_o(core_in_ready),
-      .outport_valid_o(core_out_valid),
-      .outport_width_o(core_out_width),
-      .outport_height_o(core_out_height),
-      .outport_pixel_x_o(core_out_x),
-      .outport_pixel_y_o(core_out_y),
-      .outport_pixel_r_o(core_out_r),
-      .outport_pixel_g_o(core_out_g),
-      .outport_pixel_b_o(core_out_b),
-      .idle_o(core_idle)
+      .m_axis_tdata(core_out_tdata),
+      .m_axis_tkeep(core_out_tkeep),
+      .m_axis_tvalid(core_out_tvalid),
+      .m_axis_tready(core_out_tready),
+      .m_axis_tlast(core_out_tlast),
+      .out_dims_valid(core_dims_valid),
+      .out_width(core_out_width),
+      .out_height(core_out_height),
+      .idle(core_idle)
   );
 
   // --------------------------------------------------------------------------
@@ -781,45 +744,8 @@ INPUT_FIFO_DEPTH_BYTES
   wire out_fifo_tready;
   wire out_fifo_tlast;
   wire out_fifo_tready_dma;
-  wire [AXIS_DATA_WIDTH-1:0] out_adapter_tdata;
-  wire [AXIS_KEEP_WIDTH-1:0] out_adapter_tkeep;
-  wire out_adapter_tvalid;
-  wire out_adapter_tready;
-  wire out_adapter_tlast;
 
-  wire out_fifo_s_last = (core_out_x == core_out_width - 1'b1) && (core_out_y == core_out_height - 1'b1);
-
-  axis_adapter #(
-      .S_DATA_WIDTH(24),
-      .S_KEEP_ENABLE(1),
-      .S_KEEP_WIDTH(3),
-      .M_DATA_WIDTH(AXIS_DATA_WIDTH),
-      .M_KEEP_ENABLE(1),
-      .M_KEEP_WIDTH(AXIS_KEEP_WIDTH),
-      .ID_ENABLE(0),
-      .DEST_ENABLE(0),
-      .USER_ENABLE(0),
-      .USER_WIDTH(1)
-  ) out_adapter (
-      .clk(clk),
-      .rst(rst),
-      .s_axis_tdata({core_out_b, core_out_g, core_out_r}),
-      .s_axis_tkeep(3'b111),
-      .s_axis_tvalid(core_out_valid),
-      .s_axis_tready(out_adapter_tready),
-      .s_axis_tlast(out_fifo_s_last),
-      .s_axis_tid(),
-      .s_axis_tdest(),
-      .s_axis_tuser(),
-      .m_axis_tdata(out_adapter_tdata),
-      .m_axis_tkeep(out_adapter_tkeep),
-      .m_axis_tvalid(out_adapter_tvalid),
-      .m_axis_tready(out_fifo_tready),
-      .m_axis_tlast(out_adapter_tlast),
-      .m_axis_tid(),
-      .m_axis_tdest(),
-      .m_axis_tuser()
-  );
+  assign core_out_tready = out_fifo_tready;
 
   axis_fifo #(
       .DEPTH(OUTPUT_FIFO_DEPTH_BYTES),
@@ -836,11 +762,11 @@ INPUT_FIFO_DEPTH_BYTES
   ) output_fifo (
       .clk(clk),
       .rst(rst),
-      .s_axis_tdata(out_adapter_tdata),
-      .s_axis_tkeep(out_adapter_tkeep),
-      .s_axis_tvalid(out_adapter_tvalid),
+      .s_axis_tdata(core_out_tdata),
+      .s_axis_tkeep(core_out_tkeep),
+      .s_axis_tvalid(core_out_tvalid),
       .s_axis_tready(out_fifo_tready),
-      .s_axis_tlast(out_adapter_tlast),
+      .s_axis_tlast(core_out_tlast),
       .s_axis_tid(),
       .s_axis_tdest(),
       .s_axis_tuser(1'b0),
@@ -867,7 +793,6 @@ INPUT_FIFO_DEPTH_BYTES
       && (write_chunk_bytes_sent + out_fifo_tkeep_count == write_chunk_len);
   wire task_done = dma_write_desc_status_valid && (write_bytes_remaining == write_chunk_len);
 
-  assign core_out_accept = out_adapter_tready;
   assign dma_write_data_tdata = out_fifo_tdata;
   assign dma_write_data_tkeep = out_fifo_tkeep;
   assign dma_write_data_tvalid = out_fifo_tvalid && write_chunk_active && !write_chunk_data_done;
@@ -875,7 +800,7 @@ INPUT_FIFO_DEPTH_BYTES
 
   assign out_fifo_tready_dma = write_chunk_active && !write_chunk_data_done && dma_write_data_tready;
 
-  wire capture_dimensions = core_out_valid && core_out_accept && !have_dimensions;
+  wire capture_dimensions = core_dims_valid;
 
   // --------------------------------------------------------------------------
   // Completion push
