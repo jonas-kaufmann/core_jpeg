@@ -1,5 +1,5 @@
 `timescale 1ps / 1ps
-`include "jpeg_params.svh"
+`include "jpeg_params.vh"
 
 
 module jpeg_sim (

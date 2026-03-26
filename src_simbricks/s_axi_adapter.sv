@@ -1,5 +1,5 @@
 `timescale 1ns / 1ps
-`include "jpeg_params.svh"
+`include "jpeg_params.vh"
 
 module s_axi_adapter(
     input clk,

@@ -1,5 +1,5 @@
-`ifndef JPEG_PARAMS_SVH
-`define JPEG_PARAMS_SVH
+`ifndef JPEG_PARAMS_VH
+`define JPEG_PARAMS_VH
 
 `define JPEG_MMIO_BITS_ADDR 32
 

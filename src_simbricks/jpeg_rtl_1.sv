@@ -1,4 +1,4 @@
-`include "jpeg_params.svh"
+`include "jpeg_params.vh"
 
 module jpeg_shell #(
     parameter int JPEG_SUPPORT_WRITABLE_DHT = 1,
