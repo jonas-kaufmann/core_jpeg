@@ -7,7 +7,8 @@
 `define JPEG_DMA_BITS_DATA (`JPEG_DMA_BYTES_DATA * 8)
 
 `define JPEG_DMA_BITS_LEN 8
-`define JPEG_DMA_BITS_ID 8
-`define JPEG_DMA_BITS_ADDR 64
+`define JPEG_DMA_MAX_BURST_LEN 2
+`define JPEG_DMA_BITS_ID 5
+`define JPEG_DMA_BITS_ADDR 40
 
 `endif
