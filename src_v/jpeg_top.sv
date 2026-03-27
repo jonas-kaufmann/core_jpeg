@@ -486,7 +486,7 @@ module jpeg_top #(
         end
       end
 
-      if (core_reset_armed && read_stream_done && write_stream_done && core_idle) begin
+      if (core_reset_armed && read_stream_done && write_stream_done) begin
         core_reset_pulse <= 1'b1;
         core_reset_armed <= 1'b0;
       end
@@ -673,7 +673,7 @@ INPUT_FIFO_DEPTH_BYTES
       .OUTPUT_FIFO_ENABLE(0)
   ) input_fifo (
       .clk(clk),
-      .rst(rst),
+      .rst(core_rst),
       .s_axis_tdata(dma_read_data_tdata),
       .s_axis_tkeep(dma_read_data_tkeep),
       .s_axis_tvalid(dma_read_data_tvalid),
@@ -701,7 +701,6 @@ INPUT_FIFO_DEPTH_BYTES
 
   wire [15:0] core_out_width;
   wire [15:0] core_out_height;
-  wire core_idle;
   wire core_rst = rst || core_reset_pulse;
 
   wire [AXIS_DATA_WIDTH-1:0] core_out_tdata;
@@ -731,7 +730,7 @@ INPUT_FIFO_DEPTH_BYTES
       .out_dims_valid(core_dims_valid),
       .out_width(core_out_width),
       .out_height(core_out_height),
-      .idle(core_idle)
+      .idle()
   );
 
   // --------------------------------------------------------------------------
@@ -761,7 +760,7 @@ INPUT_FIFO_DEPTH_BYTES
       .OUTPUT_FIFO_ENABLE(0)
   ) output_fifo (
       .clk(clk),
-      .rst(rst),
+      .rst(core_rst),
       .s_axis_tdata(core_out_tdata),
       .s_axis_tkeep(core_out_tkeep),
       .s_axis_tvalid(core_out_tvalid),
