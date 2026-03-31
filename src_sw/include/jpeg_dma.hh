@@ -4,6 +4,7 @@
 #include <bitset>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <iostream>
 #include <mutex>
 
@@ -35,6 +36,25 @@ class BufferPool {
       buffers_[i] = buf;
     }
     slot_in_use_.reset();
+    return true;
+  }
+
+  bool InitMallocBufferPool() {
+    std::lock_guard<std::mutex> lock(mu_);
+    for (size_t i = 0; i < kNumSlots; ++i) {
+      DmaBufferRef buf{};
+      void *ptr = nullptr;
+      if (posix_memalign(&ptr, kAlignmentBytes, kSlotSizeBytes) != 0) {
+        std::cerr << __func__ << "(): malloc pool allocation failed at slot "
+                  << i << "\n";
+        return false;
+      }
+      buf.vaddr = ptr;
+      buf.size = kSlotSizeBytes;
+      buffers_[i] = buf;
+    }
+    slot_in_use_.reset();
+    uses_malloc_ = true;
     return true;
   }
 
@@ -81,6 +101,7 @@ class BufferPool {
  private:
   std::array<DmaBufferRef, kNumSlots> buffers_{};
   std::bitset<kNumSlots> slot_in_use_{};
+  bool uses_malloc_ = false;
   std::mutex mu_;
 };
 

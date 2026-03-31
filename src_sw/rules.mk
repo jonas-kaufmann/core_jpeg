@@ -2,14 +2,14 @@ include mk/subdir_pre.mk
 
 # TODO(jonas-kaufmann): Compile two version of binary; one for x86 and one for ARM64
 
-JPEG_CPPFLAGS_EXTRA := -I$(d)
+JPEG_CPPFLAGS_EXTRA := -I$(d) -I$(d)/../c_model
 jpeg_driver := $(d)jpeg_driver
 
 $(jpeg_driver): CPPFLAGS += $(JPEG_CPPFLAGS_EXTRA)
 $(jpeg_driver): CXX := aarch64-linux-gnu-g++
-$(jpeg_driver): $(d)vfio.o $(d)jpeg_dma.o
+$(jpeg_driver): $(d)vfio.o $(d)jpeg_dma.o $(d)jpeg_sw.o
 
-OBJS := $(d)jpeg_driver.o $(d)jpeg_dma.o $(d)vfio.o
+OBJS := $(d)jpeg_driver.o $(d)jpeg_dma.o $(d)jpeg_sw.o $(d)vfio.o
 CLEAN := $(OBJS) $(jpeg_driver)
 ALL := $(jpeg_driver)
 

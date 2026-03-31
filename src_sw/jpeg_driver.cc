@@ -13,7 +13,6 @@
 #include <cstring>
 #include <iomanip>
 #include <iostream>
-#include <memory>
 #include <mutex>
 #include <queue>
 #include <thread>
@@ -21,6 +20,7 @@
 #include <vector>
 
 #include "include/jpeg_regs.hh"
+#include "include/jpeg_sw.hh"
 #include "include/vfio.hh"
 
 namespace jpeg {
@@ -36,6 +36,233 @@ constexpr uint32_t kDescriptorSubmitTimeoutMs = 100;
 // flushed, so any write after the barrier cannot be reordered to before.
 inline void mmio_write_barrier() {
   asm volatile("dmb oshst" ::: "memory");
+}
+
+ImageDecodedEvent BuildDecodedEvent(const DecodeInflightTask &inflight_task,
+                                    const DstBufferPool &dst_pool,
+                                    const jpeg_cpl_entry &cpl) {
+  ImageDecodedEvent event{};
+  event.task_id = inflight_task.task_id;
+  event.image_path = inflight_task.src_task.image_path;
+  event.dst_slot = inflight_task.dst_slot;
+  event.dst = dst_pool.BufferAt(inflight_task.dst_slot);
+  event.cpl = cpl;
+  return event;
+}
+
+bool HardwareDecoderManagerThreadMain(volatile jpeg_regs *jpeg_dev,
+                                      volatile sim_ctrl_regs *sim_ctrl,
+                                      const DstBufferPool &dst_pool,
+                                      size_t total_images,
+                                      PipelineQueues *queues) {
+  if (queues == nullptr || jpeg_dev == nullptr || sim_ctrl == nullptr ||
+      dst_pool.SlotCount() == 0) {
+    return false;
+  }
+  if (total_images == 0) {
+    return true;
+  }
+
+  std::queue<uint32_t> free_slots;
+  for (uint32_t i = 0; i < dst_pool.SlotCount(); ++i) {
+    free_slots.push(i);
+  }
+
+  size_t num_submitted = 0;
+  size_t num_completed = 0;
+  std::unordered_map<uint16_t, DecodeInflightTask> inflight;
+
+  queues->load_to_decode.WaitForEntry();
+
+  sim_ctrl->simulation_enabled = 1;
+  mmio_write_barrier();
+
+  while (num_completed < total_images) {
+    bool progressed = false;
+
+    while (true) {
+      std::optional<jpeg_cpl_entry> cpl = TryPopCompletion(jpeg_dev);
+      if (cpl.has_value() == false) {
+        break;
+      }
+
+      auto it = inflight.find(cpl->task_id);
+      if (it == inflight.end()) {
+        std::cerr << __func__
+                  << "(): completion for unknown task_id=" << cpl->task_id
+                  << "\n";
+        return false;
+      }
+      if (it->second.dst_slot >= dst_pool.SlotCount()) {
+        std::cerr << __func__ << "(): invalid dst slot in inflight state\n";
+        return false;
+      }
+
+      const auto decode_done = std::chrono::steady_clock::now();
+      const auto decode_us =
+          std::chrono::duration_cast<std::chrono::microseconds>(
+              decode_done - it->second.submit_ts)
+              .count();
+      std::cout << "decode finished: task_id=" << it->second.task_id
+                << " path=" << it->second.src_task.image_path
+                << " latency_us=" << decode_us << "\n";
+
+      queues->decode_to_post.Push(
+          BuildDecodedEvent(it->second, dst_pool, *cpl));
+      queues->released_src_slots.Push(it->second.src_task.src_slot);
+      inflight.erase(it);
+      num_completed += 1;
+      progressed = true;
+    }
+
+    if (num_submitted < total_images && free_slots.empty() == false) {
+      ImageLoadedEvent src_task{};
+      queues->load_to_decode.Pop(&src_task);
+      num_submitted += 1;
+      const uint32_t slot = free_slots.front();
+      free_slots.pop();
+
+      const DmaBufferRef &dst_buf = dst_pool.BufferAt(slot);
+      if (src_task.src.vaddr == nullptr || src_task.src.paddr == 0 ||
+          src_task.src.size == 0 || dst_buf.vaddr == nullptr ||
+          dst_buf.paddr == 0 || dst_buf.size == 0) {
+        std::cerr << __func__ << "(): invalid descriptor arguments\n";
+        return false;
+      }
+
+      const auto deadline =
+          std::chrono::steady_clock::now() +
+          std::chrono::milliseconds(kDescriptorSubmitTimeoutMs);
+      while (jpeg_dev->desc_num_free == 0) {
+        if (std::chrono::steady_clock::now() >= deadline) {
+          std::cerr << __func__
+                    << "(): timed out waiting for free descriptor\n";
+          return false;
+        }
+        std::this_thread::sleep_for(
+            std::chrono::microseconds(kDescriptorPollUs));
+      }
+
+      jpeg_dev->src_addr = src_task.src.paddr;
+      jpeg_dev->src_len = src_task.src.size;
+      jpeg_dev->dst_addr = dst_buf.paddr;
+      jpeg_dev->task_id = src_task.task_id;
+      mmio_write_barrier();
+      jpeg_dev->desc_commit = 1;
+      mmio_write_barrier();
+
+      DecodeInflightTask inflight_task{};
+      inflight_task.task_id = src_task.task_id;
+      inflight_task.dst_slot = slot;
+      inflight_task.submit_ts = std::chrono::steady_clock::now();
+      inflight_task.src_task = std::move(src_task);
+
+      auto inserted =
+          inflight.emplace(inflight_task.task_id, std::move(inflight_task));
+      if (inserted.second == false) {
+        std::cerr << __func__
+                  << "(): duplicate task_id=" << inserted.first->first
+                  << " in flight\n";
+        return false;
+      }
+
+      progressed = true;
+    }
+
+    if (free_slots.empty()) {
+      uint32_t released_slot = 0;
+      queues->released_dst_slots.Pop(&released_slot);
+      if (released_slot >= dst_pool.SlotCount()) {
+        std::cerr << __func__
+                  << "(): invalid released dst slot=" << released_slot << "\n";
+        return false;
+      }
+      free_slots.push(released_slot);
+      progressed = true;
+    }
+
+    if (progressed == false) {
+      std::this_thread::sleep_for(
+          std::chrono::microseconds(kDecodePollSleepUs));
+    }
+  }
+
+  sim_ctrl->simulation_enabled = 0;
+  mmio_write_barrier();
+  return true;
+}
+
+bool SoftwareDecoderManagerThreadMain(const DstBufferPool &dst_pool,
+                                      size_t total_images,
+                                      PipelineQueues *queues) {
+  if (queues == nullptr || dst_pool.SlotCount() == 0) {
+    return false;
+  }
+  if (total_images == 0) {
+    return true;
+  }
+
+  std::queue<uint32_t> free_slots;
+  for (uint32_t i = 0; i < dst_pool.SlotCount(); ++i) {
+    free_slots.push(i);
+  }
+
+  for (size_t i = 0; i < total_images; ++i) {
+    if (free_slots.empty()) {
+      uint32_t released_slot = 0;
+      queues->released_dst_slots.Pop(&released_slot);
+      if (released_slot >= dst_pool.SlotCount()) {
+        std::cerr << __func__
+                  << "(): invalid released dst slot=" << released_slot << "\n";
+        return false;
+      }
+      free_slots.push(released_slot);
+    }
+
+    ImageLoadedEvent src_task{};
+    queues->load_to_decode.Pop(&src_task);
+
+    const uint32_t slot = free_slots.front();
+    free_slots.pop();
+
+    const DmaBufferRef &dst_buf = dst_pool.BufferAt(slot);
+    if (src_task.src.vaddr == nullptr || src_task.src.size == 0 ||
+        dst_buf.vaddr == nullptr || dst_buf.size == 0) {
+      std::cerr << __func__ << "(): invalid software decode buffers\n";
+      return false;
+    }
+
+    const auto decode_start = std::chrono::steady_clock::now();
+    jpeg_cpl_entry cpl{};
+    if (SoftwareDecodeJpeg(src_task.src, dst_buf, &cpl) == false) {
+      std::cerr << __func__ << "(): software decode failed for "
+                << src_task.image_path << "\n";
+      return false;
+    }
+    cpl.is_valid = 1;
+    cpl.task_id = src_task.task_id;
+
+    DecodeInflightTask inflight_task{};
+    inflight_task.task_id = src_task.task_id;
+    inflight_task.dst_slot = slot;
+    inflight_task.submit_ts = decode_start;
+    inflight_task.src_task = std::move(src_task);
+
+    const auto decode_done = std::chrono::steady_clock::now();
+    const auto decode_us =
+        std::chrono::duration_cast<std::chrono::microseconds>(decode_done -
+                                                              decode_start)
+            .count();
+    std::cout << "decode finished: task_id=" << inflight_task.task_id
+              << " path=" << inflight_task.src_task.image_path
+              << " latency_us=" << decode_us << "\n";
+
+    queues->decode_to_post.Push(
+        BuildDecodedEvent(inflight_task, dst_pool, cpl));
+    queues->released_src_slots.Push(inflight_task.src_task.src_slot);
+  }
+
+  return true;
 }
 
 inline std::chrono::steady_clock::time_point now_ts() {
@@ -172,157 +399,6 @@ bool ImageLoaderThread(const std::vector<std::string> &image_paths,
   return true;
 }
 
-bool DecoderManagerThreadMain(volatile jpeg_regs *jpeg_dev,
-                              volatile sim_ctrl_regs *sim_ctrl,
-                              const DstBufferPool &dst_pool,
-                              size_t total_images, PipelineQueues *queues) {
-  if (queues == nullptr || jpeg_dev == nullptr || sim_ctrl == nullptr ||
-      dst_pool.SlotCount() == 0) {
-    return false;
-  }
-
-  std::queue<uint32_t> free_slots;
-  for (uint32_t i = 0; i < dst_pool.SlotCount(); ++i) {
-    free_slots.push(i);
-  }
-
-  size_t num_submitted = 0;
-  size_t num_completed = 0;
-  std::unordered_map<uint16_t, DecodeInflightTask> inflight;
-
-  queues->load_to_decode.WaitForEntry();
-
-  // enable simulation of JPEG decoder
-  sim_ctrl->simulation_enabled = 1;
-  mmio_write_barrier();
-
-  while (num_completed < total_images) {
-    bool progressed = false;
-
-    // process all available completion entries
-    while (true) {
-      std::optional<jpeg_cpl_entry> cpl = TryPopCompletion(jpeg_dev);
-      if (!cpl.has_value()) {
-        break;
-      }
-
-      auto it = inflight.find(cpl->task_id);
-      if (it == inflight.end()) {
-        std::cerr << __func__
-                  << "(): completion for unknown task_id=" << cpl->task_id
-                  << "\n";
-        return false;
-      }
-
-      const DecodeInflightTask &inflight_task = it->second;
-      if (inflight_task.dst_slot >= dst_pool.SlotCount()) {
-        std::cerr << __func__ << "(): invalid dst slot in inflight state\n";
-        return false;
-      }
-      const auto decode_done = now_ts();
-      const auto decode_us =
-          std::chrono::duration_cast<std::chrono::microseconds>(
-              decode_done - inflight_task.submit_ts)
-              .count();
-      std::cout << "decode finished: task_id=" << inflight_task.task_id
-                << " path=" << inflight_task.src_task.image_path
-                << " latency_us=" << decode_us << "\n";
-
-      ImageDecodedEvent event{};
-      event.task_id = inflight_task.task_id;
-      event.image_path = inflight_task.src_task.image_path;
-      event.dst_slot = inflight_task.dst_slot;
-      event.dst = dst_pool.BufferAt(inflight_task.dst_slot);
-      event.cpl = *cpl;
-      queues->decode_to_post.Push(std::move(event));
-      queues->released_src_slots.Push(inflight_task.src_task.src_slot);
-
-      inflight.erase(it);
-      ++num_completed;
-      progressed = true;
-    }
-
-    // push task descriptor for new image to decode
-    if (num_submitted < total_images && !free_slots.empty()) {
-      ImageLoadedEvent src_task{};
-      queues->load_to_decode.Pop(&src_task);
-      ++num_submitted;
-      uint32_t slot = free_slots.front();
-      free_slots.pop();
-
-      const DmaBufferRef &dst_buf = dst_pool.BufferAt(slot);
-      if (src_task.src.vaddr == nullptr || src_task.src.paddr == 0 ||
-          src_task.src.size == 0 || dst_buf.vaddr == nullptr ||
-          dst_buf.paddr == 0 || dst_buf.size == 0) {
-        std::cerr << __func__ << "(): invalid descriptor arguments\n";
-        return false;
-      }
-
-      // wait for free descriptor
-      auto deadline = std::chrono::steady_clock::now() +
-                      std::chrono::milliseconds(kDescriptorSubmitTimeoutMs);
-      while (jpeg_dev->desc_num_free == 0) {
-        if (std::chrono::steady_clock::now() >= deadline) {
-          std::cerr << __func__
-                    << "(): timed out waiting for free descriptor\n";
-          return false;
-        }
-        std::this_thread::sleep_for(
-            std::chrono::microseconds(kDescriptorPollUs));
-      }
-
-      jpeg_dev->src_addr = src_task.src.paddr;
-      jpeg_dev->src_len = src_task.src.size;
-      jpeg_dev->dst_addr = dst_buf.paddr;
-      jpeg_dev->task_id = src_task.task_id;
-      mmio_write_barrier();
-      jpeg_dev->desc_commit = 1;
-      mmio_write_barrier();
-
-      DecodeInflightTask inflight_task{};
-      inflight_task.task_id = src_task.task_id;
-      inflight_task.dst_slot = slot;
-      inflight_task.submit_ts = now_ts();
-      inflight_task.src_task = std::move(src_task);
-
-      auto inserted =
-          inflight.emplace(inflight_task.task_id, std::move(inflight_task));
-      if (!inserted.second) {
-        std::cerr << __func__
-                  << "(): duplicate task_id=" << inserted.first->first
-                  << " in flight\n";
-        return false;
-      }
-
-      progressed = true;
-    }
-
-    // release slots in DMA dst buffer pool
-    if (free_slots.empty()) {
-      uint32_t released_slot = 0;
-      queues->released_dst_slots.Pop(&released_slot);
-      if (released_slot >= dst_pool.SlotCount()) {
-        std::cerr << __func__
-                  << "(): invalid released dst slot=" << released_slot << "\n";
-        return false;
-      }
-      free_slots.push(released_slot);
-      progressed = true;
-    }
-
-    if (!progressed) {
-      std::this_thread::sleep_for(
-          std::chrono::microseconds(kDecodePollSleepUs));
-    }
-  }
-
-  // disable simulation of JPEG decoder
-  sim_ctrl->simulation_enabled = 0;
-  mmio_write_barrier();
-
-  return true;
-}
-
 bool PostProcessThreadMain(size_t total_images,
                            uint32_t postprocess_spin_cycles,
                            PipelineQueues *queues) {
@@ -430,46 +506,55 @@ bool init_devmem(const char *phys_addr_str,
 
 int main(int argc, char *argv[]) {
   if (argc < 5) {
-    std::cerr << "usage: jpeg_driver_revamped {vfio|devmem} DEVICE-ARG "
+    std::cerr << "usage: jpeg_driver {vfio|devmem|sw} DEVICE-ARG "
                  "POSTPROCESS_SPIN_CYCLES PATH_TO_IMAGE...\n";
     return EXIT_FAILURE;
   }
 
   volatile struct jpeg_regs *jpeg_dev = nullptr;
   volatile struct sim_ctrl_regs *sim_ctrl = nullptr;
+  const uint32_t postprocess_spin_cycles =
+      static_cast<uint32_t>(std::strtoul(argv[3], nullptr, 0));
   const std::string backend = argv[1];
+
   if (backend == "vfio") {
-    if (!init_vfio(argv[2], &jpeg_dev, &sim_ctrl)) {
+    if (init_vfio(argv[2], &jpeg_dev, &sim_ctrl) == false) {
       return EXIT_FAILURE;
     }
   } else if (backend == "devmem") {
-    if (!init_devmem(argv[2], &jpeg_dev, &sim_ctrl)) {
+    if (init_devmem(argv[2], &jpeg_dev, &sim_ctrl) == false) {
       return EXIT_FAILURE;
     }
-  } else {
+  } else if (backend != "sw") {
     std::cerr << "unknown backend '" << backend
-              << "', expected 'vfio' or 'devmem'\n";
-    return EXIT_FAILURE;
-  }
-
-  const uint32_t postprocess_spin_cycles =
-      static_cast<uint32_t>(std::strtoul(argv[3], nullptr, 0));
-
-  if (!jpeg::InitGlobalDma()) {
-    std::cerr << "DMA init failed\n";
+              << "', expected 'vfio', 'devmem', or 'sw'\n";
     return EXIT_FAILURE;
   }
 
   jpeg::SrcBufferPool src_pool;
-  if (!src_pool.InitDmaBufferPool()) {
-    std::cerr << "source DMA pool init failed\n";
-    return EXIT_FAILURE;
-  }
-
   jpeg::DstBufferPool dst_pool;
-  if (!dst_pool.InitDmaBufferPool()) {
-    std::cerr << "destination DMA pool init failed\n";
-    return EXIT_FAILURE;
+  if (backend != "sw") {
+    if (!jpeg::InitGlobalDma()) {
+      std::cerr << "DMA init failed\n";
+      return EXIT_FAILURE;
+    }
+    if (!src_pool.InitDmaBufferPool()) {
+      std::cerr << "source DMA pool init failed\n";
+      return EXIT_FAILURE;
+    }
+    if (!dst_pool.InitDmaBufferPool()) {
+      std::cerr << "destination DMA pool init failed\n";
+      return EXIT_FAILURE;
+    }
+  } else {
+    if (src_pool.InitMallocBufferPool() == false) {
+      std::cerr << "source malloc pool init failed\n";
+      return EXIT_FAILURE;
+    }
+    if (dst_pool.InitMallocBufferPool() == false) {
+      std::cerr << "destination malloc pool init failed\n";
+      return EXIT_FAILURE;
+    }
   }
 
   std::vector<std::string> image_paths;
@@ -499,8 +584,11 @@ int main(int argc, char *argv[]) {
     status_cv.notify_one();
   });
   std::thread decoder_thr([&]() {
-    const bool ok = jpeg::DecoderManagerThreadMain(jpeg_dev, sim_ctrl, dst_pool,
-                                                   total_images, &queues);
+    const bool ok = (backend == "sw") ? jpeg::SoftwareDecoderManagerThreadMain(
+                                            dst_pool, total_images, &queues)
+                                      : jpeg::HardwareDecoderManagerThreadMain(
+                                            jpeg_dev, sim_ctrl, dst_pool,
+                                            total_images, &queues);
     {
       std::lock_guard<std::mutex> lock(status_mu);
       decoder_ok = ok;

@@ -1,9 +1,9 @@
 #pragma once
 
+#include <chrono>
 #include <condition_variable>
 #include <cstddef>
 #include <cstdint>
-#include <chrono>
 #include <mutex>
 #include <optional>
 #include <queue>
@@ -69,10 +69,15 @@ bool LoadImageToDma(const char *img, const DmaBufferRef &dst_dma,
 bool ImageLoaderThread(const std::vector<std::string> &image_paths,
                        const SrcBufferPool &src_pool, PipelineQueues *queues);
 
-bool DecoderManagerThreadMain(volatile jpeg_regs *jpeg_dev,
-                              volatile sim_ctrl_regs *sim_ctrl,
-                              const DstBufferPool &dst_pool,
-                              size_t total_images, PipelineQueues *queues);
+bool HardwareDecoderManagerThreadMain(volatile jpeg_regs *jpeg_dev,
+                                      volatile sim_ctrl_regs *sim_ctrl,
+                                      const DstBufferPool &dst_pool,
+                                      size_t total_images,
+                                      PipelineQueues *queues);
+
+bool SoftwareDecoderManagerThreadMain(const DstBufferPool &dst_pool,
+                                      size_t total_images,
+                                      PipelineQueues *queues);
 
 bool PostProcessThreadMain(size_t total_images,
                            uint32_t postprocess_spin_cycles,
