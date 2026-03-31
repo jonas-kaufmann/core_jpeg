@@ -12,3 +12,4 @@ src_sw/.cache
 src_sw/*.d
 src_sw/*.o
 src_sw/jpeg_driver
+src_sw/jpeg_driver_native
