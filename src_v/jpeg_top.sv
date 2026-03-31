@@ -123,6 +123,7 @@ module jpeg_top #(
   localparam logic [7:0] REG_DESC_COMMIT = 8'h20;
   localparam logic [7:0] REG_DESC_FREE = 8'h28;
   localparam logic [7:0] REG_CPL_STATUS = 8'h30;
+  localparam logic [7:0] REG_RESET = 8'h38;
 
   assign s_axil_bresp = 2'b0;
   assign s_axil_rresp = 2'b0;
@@ -131,6 +132,7 @@ module jpeg_top #(
   logic [63:0] mmio_desc_src_len_reg;
   logic [63:0] mmio_desc_dst_addr_reg;
   logic [15:0] mmio_desc_id_reg;
+  logic mmio_reset_pulse;
 
   typedef enum logic {
     WR_IDLE,
@@ -186,6 +188,7 @@ module jpeg_top #(
       s_axil_bvalid <= 1'b0;
       axil_wr_state <= WR_IDLE;
       desc_fifo_push <= 1'b0;
+      mmio_reset_pulse <= 1'b0;
       mmio_desc_src_addr_reg <= 64'd0;
       mmio_desc_src_len_reg <= 64'd0;
       mmio_desc_dst_addr_reg <= 64'd0;
@@ -197,6 +200,7 @@ module jpeg_top #(
       wstrb_hold <= 8'd0;
     end else begin
       desc_fifo_push <= 1'b0;
+      mmio_reset_pulse <= 1'b0;
 
       unique case (axil_wr_state)
         WR_IDLE: begin
@@ -256,6 +260,11 @@ module jpeg_top #(
                   desc_fifo_push <= 1'b1;
                 end
               end
+              REG_RESET: begin
+                if (|wdata_hold) begin
+                  mmio_reset_pulse <= 1'b1;
+                end
+              end
               default: begin
               end
             endcase
@@ -275,7 +284,7 @@ module jpeg_top #(
 
   // MMIO read path
   always_ff @(posedge clk) begin
-    if (rst) begin
+    if (rst || mmio_reset_pulse) begin
       s_axil_arready <= 1'b0;
       s_axil_rdata   <= 64'd0;
       s_axil_rvalid  <= 1'b0;
@@ -325,7 +334,7 @@ module jpeg_top #(
 
   // MMIO FIFO updates
   always_ff @(posedge clk) begin
-    if (rst) begin
+    if (rst || mmio_reset_pulse) begin
       desc_fifo_wr_ptr <= '0;
       desc_fifo_rd_ptr <= '0;
       desc_fifo_count  <= '0;
@@ -399,7 +408,7 @@ module jpeg_top #(
   logic core_reset_pulse;
 
   always_ff @(posedge clk) begin
-    if (rst) begin
+    if (rst || mmio_reset_pulse) begin
       task_active <= 1'b0;
       read_chunk_active <= 1'b0;
       write_chunk_active <= 1'b0;
@@ -701,7 +710,7 @@ INPUT_FIFO_DEPTH_BYTES
 
   wire [15:0] core_out_width;
   wire [15:0] core_out_height;
-  wire core_rst = rst || core_reset_pulse;
+  wire core_rst = rst || core_reset_pulse || mmio_reset_pulse;
 
   wire [AXIS_DATA_WIDTH-1:0] core_out_tdata;
   wire [AXIS_KEEP_WIDTH-1:0] core_out_tkeep;

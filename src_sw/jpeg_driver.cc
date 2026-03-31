@@ -72,10 +72,13 @@ bool HardwareDecoderManagerThreadMain(volatile jpeg_regs *jpeg_dev,
   size_t num_completed = 0;
   std::unordered_map<uint16_t, DecodeInflightTask> inflight;
 
-  queues->load_to_decode.WaitForEntry();
-
   sim_ctrl->simulation_enabled = 1;
   mmio_write_barrier();
+
+  jpeg_dev->reset = 1;
+  mmio_write_barrier();
+
+  queues->load_to_decode.WaitForEntry();
 
   while (num_completed < total_images) {
     bool progressed = false;

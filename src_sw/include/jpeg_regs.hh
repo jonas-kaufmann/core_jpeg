@@ -10,6 +10,7 @@ struct __attribute__((__packed__)) jpeg_regs {
   uint64_t desc_commit;
   uint64_t desc_num_free;
   uint64_t cpl_entry;
+  uint64_t reset;
 };
 
 struct __attribute__((__packed__)) jpeg_cpl_entry {
