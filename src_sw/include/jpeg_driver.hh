@@ -43,6 +43,7 @@ class BlockingFifo {
  public:
   void Push(T value);
   void WaitForEntry();
+  bool TryPop(T *out);
   void Pop(T *out);
 
  private:
@@ -105,6 +106,17 @@ void BlockingFifo<T>::Pop(T *out) {
   cv_.wait(lock, [this]() { return !q_.empty(); });
   *out = std::move(q_.front());
   q_.pop();
+}
+
+template <typename T>
+bool BlockingFifo<T>::TryPop(T *out) {
+  std::lock_guard<std::mutex> lock(mu_);
+  if (q_.empty()) {
+    return false;
+  }
+  *out = std::move(q_.front());
+  q_.pop();
+  return true;
 }
 
 }  // namespace jpeg

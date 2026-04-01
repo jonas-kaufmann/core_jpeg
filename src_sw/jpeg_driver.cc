@@ -118,63 +118,12 @@ bool HardwareDecoderManagerThreadMain(volatile jpeg_regs *jpeg_dev,
       progressed = true;
     }
 
-    if (num_submitted < total_images && free_slots.empty() == false) {
-      ImageLoadedEvent src_task{};
-      queues->load_to_decode.Pop(&src_task);
-      num_submitted += 1;
-      const uint32_t slot = free_slots.front();
-      free_slots.pop();
-
-      const DmaBufferRef &dst_buf = dst_pool.BufferAt(slot);
-      if (src_task.src.vaddr == nullptr || src_task.src.paddr == 0 ||
-          src_task.src.size == 0 || dst_buf.vaddr == nullptr ||
-          dst_buf.paddr == 0 || dst_buf.size == 0) {
-        std::cerr << __func__ << "(): invalid descriptor arguments\n";
-        return false;
-      }
-
-      const auto deadline =
-          std::chrono::steady_clock::now() +
-          std::chrono::milliseconds(kDescriptorSubmitTimeoutMs);
-      while (jpeg_dev->desc_num_free == 0) {
-        if (std::chrono::steady_clock::now() >= deadline) {
-          std::cerr << __func__
-                    << "(): timed out waiting for free descriptor\n";
-          return false;
-        }
-        std::this_thread::sleep_for(
-            std::chrono::microseconds(kDescriptorPollUs));
-      }
-
-      jpeg_dev->src_addr = src_task.src.paddr;
-      jpeg_dev->src_len = src_task.src.size;
-      jpeg_dev->dst_addr = dst_buf.paddr;
-      jpeg_dev->task_id = src_task.task_id;
-      mmio_write_barrier();
-      jpeg_dev->desc_commit = 1;
-      mmio_write_barrier();
-
-      DecodeInflightTask inflight_task{};
-      inflight_task.task_id = src_task.task_id;
-      inflight_task.dst_slot = slot;
-      inflight_task.submit_ts = std::chrono::steady_clock::now();
-      inflight_task.src_task = std::move(src_task);
-
-      auto inserted =
-          inflight.emplace(inflight_task.task_id, std::move(inflight_task));
-      if (inserted.second == false) {
-        std::cerr << __func__
-                  << "(): duplicate task_id=" << inserted.first->first
-                  << " in flight\n";
-        return false;
-      }
-
-      progressed = true;
-    }
-
-    if (free_slots.empty()) {
+    while (true) {
       uint32_t released_slot = 0;
-      queues->released_dst_slots.Pop(&released_slot);
+      if (!free_slots.empty() ||
+          !queues->released_dst_slots.TryPop(&released_slot)) {
+        break;
+      }
       if (released_slot >= dst_pool.SlotCount()) {
         std::cerr << __func__
                   << "(): invalid released dst slot=" << released_slot << "\n";
@@ -182,6 +131,61 @@ bool HardwareDecoderManagerThreadMain(volatile jpeg_regs *jpeg_dev,
       }
       free_slots.push(released_slot);
       progressed = true;
+    }
+
+    if (num_submitted < total_images && free_slots.empty() == false) {
+      ImageLoadedEvent src_task{};
+      if (queues->load_to_decode.TryPop(&src_task)) {
+        num_submitted += 1;
+        const uint32_t slot = free_slots.front();
+        free_slots.pop();
+
+        const DmaBufferRef &dst_buf = dst_pool.BufferAt(slot);
+        if (src_task.src.vaddr == nullptr || src_task.src.paddr == 0 ||
+            src_task.src.size == 0 || dst_buf.vaddr == nullptr ||
+            dst_buf.paddr == 0 || dst_buf.size == 0) {
+          std::cerr << __func__ << "(): invalid descriptor arguments\n";
+          return false;
+        }
+
+        const auto deadline =
+            std::chrono::steady_clock::now() +
+            std::chrono::milliseconds(kDescriptorSubmitTimeoutMs);
+        while (jpeg_dev->desc_num_free == 0) {
+          if (std::chrono::steady_clock::now() >= deadline) {
+            std::cerr << __func__
+                      << "(): timed out waiting for free descriptor\n";
+            return false;
+          }
+          std::this_thread::sleep_for(
+              std::chrono::microseconds(kDescriptorPollUs));
+        }
+
+        jpeg_dev->src_addr = src_task.src.paddr;
+        jpeg_dev->src_len = src_task.src.size;
+        jpeg_dev->dst_addr = dst_buf.paddr;
+        jpeg_dev->task_id = src_task.task_id;
+        mmio_write_barrier();
+        jpeg_dev->desc_commit = 1;
+        mmio_write_barrier();
+
+        DecodeInflightTask inflight_task{};
+        inflight_task.task_id = src_task.task_id;
+        inflight_task.dst_slot = slot;
+        inflight_task.submit_ts = std::chrono::steady_clock::now();
+        inflight_task.src_task = std::move(src_task);
+
+        auto inserted =
+            inflight.emplace(inflight_task.task_id, std::move(inflight_task));
+        if (inserted.second == false) {
+          std::cerr << __func__
+                    << "(): duplicate task_id=" << inserted.first->first
+                    << " in flight\n";
+          return false;
+        }
+
+        progressed = true;
+      }
     }
 
     if (progressed == false) {
