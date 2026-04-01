@@ -577,19 +577,16 @@ module jpeg_top #(
       input_fifo_free_bytes[i] = (INPUT_FIFO_DEPTH_BYTES - input_fifo_occupied_len[i])
           & ~(AXI_DMA_STRB_WIDTH - 1);
       can_issue_read_desc[i] = !read_service_active && (slot_state[i] == SLOT_RUN) && !read_stream_done[i]
-          && !read_chunk_active[i] && (task_src_len[i] != 0) && (input_fifo_free_bytes[i] != 0);
-      next_read_desc_len[i] = task_src_len[i] > AXI_DMA_BYTES_MAX ? AXI_DMA_BYTES_MAX
-          : task_src_len[i] < input_fifo_free_bytes[i] ? task_src_len[i] : input_fifo_free_bytes[i];
+          && !read_chunk_active[i] && (task_src_len[i] != 0) && (input_fifo_free_bytes[i] >= AXI_DMA_BYTES_MAX);
+      next_read_desc_len[i] = task_src_len[i] > AXI_DMA_BYTES_MAX ? AXI_DMA_BYTES_MAX : task_src_len[i];
 
       capture_pixel_count[i] = {16'd0, core_out_width[i]} * {16'd0, core_out_height[i]};
       capture_byte_count[i] = capture_pixel_count[i] * 3;
       can_issue_write_desc[i] = !write_service_active && (slot_state[i] == SLOT_RUN) && have_dimensions[i]
           && !write_stream_done[i] && !write_chunk_active[i] && (write_bytes_remaining[i] != 0)
           && (output_fifo_occupied_len[i] >= AXI_DMA_STRB_WIDTH);
-      next_write_desc_len[i] = write_bytes_remaining[i] > AXI_DMA_BYTES_MAX ? AXI_DMA_BYTES_MAX
-          : (write_bytes_remaining[i] & ~(AXI_DMA_STRB_WIDTH - 1)) != 0
-              ? (write_bytes_remaining[i] & ~(AXI_DMA_STRB_WIDTH - 1))
-              : write_bytes_remaining[i];
+      next_write_desc_len[i] = output_fifo_occupied_len[i] > AXI_DMA_BYTES_MAX ? AXI_DMA_BYTES_MAX
+          : output_fifo_occupied_len[i] & ~(AXI_DMA_STRB_WIDTH - 1);
     end
   end
 
