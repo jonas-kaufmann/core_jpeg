@@ -93,7 +93,9 @@ module jpeg_top #(
   localparam int INPUT_FIFO_DEPTH_BYTES = INPUT_FIFO_SLOTS * AXI_DMA_STRB_WIDTH;
   localparam int OUTPUT_FIFO_DEPTH_BYTES = OUTPUT_FIFO_SLOTS * AXI_DMA_STRB_WIDTH;
   localparam int AXI_DMA_BYTES_MAX = AXI_DMA_STRB_WIDTH * AXI_DMA_MAX_BURST_LEN;
-  localparam int AXI_DMA_LEN_WIDTH = $clog2(AXI_DMA_BYTES_MAX + 1);
+  localparam int AXI_DMA_LEN_MAX = INPUT_FIFO_DEPTH_BYTES > OUTPUT_FIFO_DEPTH_BYTES ?
+      INPUT_FIFO_DEPTH_BYTES : OUTPUT_FIFO_DEPTH_BYTES;
+  localparam int AXI_DMA_LEN_WIDTH = $clog2(AXI_DMA_LEN_MAX + 1);
   localparam int DECODER_IDX_WIDTH = JPEG_NUM_DECODERS > 1 ? $clog2(JPEG_NUM_DECODERS) : 1;
   localparam int DECODER_IDX_MASK = JPEG_NUM_DECODERS - 1;
   localparam int INPUT_FIFO_OCC_WIDTH = $clog2(INPUT_FIFO_DEPTH_BYTES) + 1;
@@ -588,8 +590,8 @@ AXIS_KEEP_WIDTH + 1
   assign read_desc_fire  = dma_read_desc_valid && dma_read_desc_ready;
   assign write_desc_fire = dma_write_desc_valid && dma_write_desc_ready;
 
-  // Per-decoder DMA eligibility and transfer sizing derived from local FIFO pressure. Except for
-  // the last transfer, we always want them to have full size, i.e. all strb bits 1.
+  // Per-decoder DMA eligibility and transfer sizing derived from local FIFO pressure. Reads fill
+  // all currently available input FIFO space and writes drain all data in output FIFO.
   always_comb begin
     integer i;
     for (i = 0; i < JPEG_NUM_DECODERS; i = i + 1) begin
@@ -597,9 +599,9 @@ AXIS_KEEP_WIDTH + 1
                                   input_fifo_occupied_len[i]) & ~(AXI_DMA_STRB_WIDTH - 1);
       can_issue_read_desc[i] = !read_service_active && (slot_state[i] == SLOT_RUN) &&
           !read_stream_done[i] && !read_chunk_active[i] && (task_src_len[i] != 0) &&
-          (input_fifo_free_bytes[i] >= AXI_DMA_BYTES_MAX);
-      next_read_desc_len[i] = task_src_len[i] > AXI_DMA_BYTES_MAX ? AXI_DMA_BYTES_MAX :
-          task_src_len[i];
+          (input_fifo_free_bytes[i] != 0);
+      next_read_desc_len[i] = task_src_len[i] > input_fifo_free_bytes[i] ?
+          input_fifo_free_bytes[i] : task_src_len[i];
 
       capture_pixel_count[i] = {16'd0, core_out_width[i]} * {16'd0, core_out_height[i]};
       capture_byte_count[i] = capture_pixel_count[i] * 3;
