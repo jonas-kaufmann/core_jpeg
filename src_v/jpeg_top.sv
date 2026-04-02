@@ -95,6 +95,7 @@ module jpeg_top #(
   localparam int AXI_DMA_BYTES_MAX = AXI_DMA_STRB_WIDTH * AXI_DMA_MAX_BURST_LEN;
   localparam int AXI_DMA_LEN_WIDTH = $clog2(AXI_DMA_BYTES_MAX + 1);
   localparam int DECODER_IDX_WIDTH = JPEG_NUM_DECODERS > 1 ? $clog2(JPEG_NUM_DECODERS) : 1;
+  localparam int DECODER_IDX_MASK = JPEG_NUM_DECODERS - 1;
   localparam int INPUT_FIFO_OCC_WIDTH = $clog2(INPUT_FIFO_DEPTH_BYTES) + 1;
   localparam int OUTPUT_FIFO_OCC_WIDTH = $clog2(OUTPUT_FIFO_DEPTH_BYTES) + 1;
 
@@ -104,6 +105,11 @@ module jpeg_top #(
         0) begin : gen_verify_param_axi_dma_strb_width
       initial
         $fatal(1, "Parameter AXI_DMA_STRB_WIDTH (%0d) must be a power of two", AXI_DMA_STRB_WIDTH);
+    end
+    if ((JPEG_NUM_DECODERS & (JPEG_NUM_DECODERS - 1)) !=
+        0) begin : gen_verify_param_jpeg_num_decoders
+      initial
+        $fatal(1, "Parameter JPEG_NUM_DECODERS (%0d) must be a power of two", JPEG_NUM_DECODERS);
     end
     if (AXI_DMA_ID_WIDTH < DECODER_IDX_WIDTH) begin : gen_verify_param_axi_dma_id_width
       initial
@@ -439,8 +445,10 @@ AXIS_KEEP_WIDTH + 1
 
   logic read_service_active;
   logic [DECODER_IDX_WIDTH-1:0] read_service_decoder;
+  logic [DECODER_IDX_WIDTH-1:0] read_rr_ptr;
   logic write_service_active;
   logic [DECODER_IDX_WIDTH-1:0] write_service_decoder;
+  logic [DECODER_IDX_WIDTH-1:0] write_rr_ptr;
 
   logic desc_assign_valid;
   logic [DECODER_IDX_WIDTH-1:0] desc_assign_decoder;
@@ -549,30 +557,30 @@ AXIS_KEEP_WIDTH + 1
 
   assign desc_fifo_pop = desc_assign_valid && !desc_fifo_empty;
 
-  // Read arbitration favors the decoder that will stall first due to input starvation.
+  // Read arbitration walks eligible decoders in round-robin order.
   always_comb begin
     integer i;
     read_issue_valid   = 1'b0;
     read_issue_decoder = '0;
     for (i = 0; i < JPEG_NUM_DECODERS; i = i + 1) begin
-      if (can_issue_read_desc[i] && (!read_issue_valid || input_fifo_occupied_len[i] <
-                                     input_fifo_occupied_len[read_issue_decoder])) begin
+      if (!read_issue_valid &&
+          can_issue_read_desc[(read_rr_ptr+DECODER_IDX_WIDTH'(i))&DECODER_IDX_MASK]) begin
         read_issue_valid   = 1'b1;
-        read_issue_decoder = DECODER_IDX_WIDTH'(i);
+        read_issue_decoder = (read_rr_ptr + DECODER_IDX_WIDTH'(i)) & DECODER_IDX_MASK;
       end
     end
   end
 
-  // Write arbitration favors the decoder that is closest to blocking on output backpressure.
+  // Write arbitration walks eligible decoders in round-robin order.
   always_comb begin
     integer i;
     write_issue_valid   = 1'b0;
     write_issue_decoder = '0;
     for (i = 0; i < JPEG_NUM_DECODERS; i = i + 1) begin
-      if (can_issue_write_desc[i] && (!write_issue_valid || output_fifo_occupied_len[i] >
-                                      output_fifo_occupied_len[write_issue_decoder])) begin
+      if (!write_issue_valid &&
+          can_issue_write_desc[(write_rr_ptr+DECODER_IDX_WIDTH'(i))&DECODER_IDX_MASK]) begin
         write_issue_valid   = 1'b1;
-        write_issue_decoder = DECODER_IDX_WIDTH'(i);
+        write_issue_decoder = (write_rr_ptr + DECODER_IDX_WIDTH'(i)) & DECODER_IDX_MASK;
       end
     end
   end
@@ -597,9 +605,11 @@ AXIS_KEEP_WIDTH + 1
       capture_byte_count[i] = capture_pixel_count[i] * 3;
       can_issue_write_desc[i] = !write_service_active && (slot_state[i] == SLOT_RUN) &&
           have_dimensions[i] && !write_stream_done[i] && !write_chunk_active[i] &&
-          (write_bytes_remaining[i] != 0) && (output_fifo_occupied_len[i] >= AXI_DMA_STRB_WIDTH);
-      next_write_desc_len[i] = output_fifo_occupied_len[i] > AXI_DMA_BYTES_MAX ? AXI_DMA_BYTES_MAX :
-          output_fifo_occupied_len[i] & ~(AXI_DMA_STRB_WIDTH - 1);
+          (write_bytes_remaining[i] != 0) && (output_fifo_occupied_len[i] != 0);
+      // Last transfer may not be full size but still occupies full size in FIFO. Hence, have to
+      // rely on write_bytes_remaining for that.
+      next_write_desc_len[i] = write_bytes_remaining[i] < output_fifo_occupied_len[i] ?
+          write_bytes_remaining[i] : output_fifo_occupied_len[i];
     end
   end
 
@@ -645,8 +655,10 @@ AXIS_KEEP_WIDTH + 1
     if (rst || mmio_reset_pulse) begin
       read_service_active   <= 1'b0;
       read_service_decoder  <= '0;
+      read_rr_ptr           <= '0;
       write_service_active  <= 1'b0;
       write_service_decoder <= '0;
+      write_rr_ptr          <= '0;
 
       for (i = 0; i < JPEG_NUM_DECODERS; i = i + 1) begin
         slot_state[i] <= SLOT_IDLE;
@@ -722,6 +734,7 @@ AXIS_KEEP_WIDTH + 1
         read_chunk_len[read_issue_decoder] <= next_read_desc_len[read_issue_decoder];
         read_service_active <= 1'b1;
         read_service_decoder <= read_issue_decoder;
+        read_rr_ptr <= (read_issue_decoder + 1'b1) & DECODER_IDX_MASK;
       end
 
       if (dma_read_data_fire && dma_read_data_tlast) begin
@@ -742,6 +755,7 @@ AXIS_KEEP_WIDTH + 1
         write_chunk_bytes_sent[write_issue_decoder] <= '0;
         write_service_active <= 1'b1;
         write_service_decoder <= write_issue_decoder;
+        write_rr_ptr <= (write_issue_decoder + 1'b1) & DECODER_IDX_MASK;
       end
 
       if (dma_write_data_fire) begin
