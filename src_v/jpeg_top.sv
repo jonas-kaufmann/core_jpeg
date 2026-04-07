@@ -245,7 +245,6 @@ module jpeg_top #(
             w_stored   <= 1'b1;
           end
 
-          // TODO(Jonas): This adds additional cycle
           if (aw_stored && w_stored) begin
             s_axil_bvalid <= 1'b1;
             axil_wr_state <= WR_RESP;
