@@ -429,15 +429,13 @@ module jpeg_top #(
   logic have_dimensions[0:JPEG_NUM_DECODERS-1];
   logic core_reset_pulse[0:JPEG_NUM_DECODERS-1];
 
-  logic [63:0] task_src_addr[0:JPEG_NUM_DECODERS-1];
-  logic [63:0] task_src_len[0:JPEG_NUM_DECODERS-1];
-  logic [63:0] task_dst_addr[0:JPEG_NUM_DECODERS-1];
-  logic [63:0] read_chunk_len[0:JPEG_NUM_DECODERS-1];
-  logic [63:0] write_bytes_remaining[0:JPEG_NUM_DECODERS-1];
-  logic [63:0] write_chunk_len[0:JPEG_NUM_DECODERS-1];
-  logic [$clog2(
-AXIS_KEEP_WIDTH + 1
-)+AXI_DMA_LEN_WIDTH-1:0] write_chunk_bytes_sent[0:JPEG_NUM_DECODERS-1];
+  logic [AXI_DMA_ADDR_WIDTH-1:0] task_src_addr[0:JPEG_NUM_DECODERS-1];
+  logic [31:0] task_src_len[0:JPEG_NUM_DECODERS-1];
+  logic [AXI_DMA_ADDR_WIDTH-1:0] task_dst_addr[0:JPEG_NUM_DECODERS-1];
+  logic [AXI_DMA_LEN_WIDTH-1:0] read_chunk_len[0:JPEG_NUM_DECODERS-1];
+  logic [31:0] write_bytes_remaining[0:JPEG_NUM_DECODERS-1];
+  logic [AXI_DMA_LEN_WIDTH-1:0] write_chunk_len[0:JPEG_NUM_DECODERS-1];
+  logic [AXI_DMA_LEN_WIDTH-1:0] write_chunk_bytes_sent[0:JPEG_NUM_DECODERS-1];
   logic [15:0] task_id[0:JPEG_NUM_DECODERS-1];
   logic [15:0] img_width[0:JPEG_NUM_DECODERS-1];
   logic [15:0] img_height[0:JPEG_NUM_DECODERS-1];
@@ -485,8 +483,8 @@ AXIS_KEEP_WIDTH + 1
 
   logic can_issue_read_desc[0:JPEG_NUM_DECODERS-1];
   logic can_issue_write_desc[0:JPEG_NUM_DECODERS-1];
-  logic [63:0] next_read_desc_len[0:JPEG_NUM_DECODERS-1];
-  logic [63:0] next_write_desc_len[0:JPEG_NUM_DECODERS-1];
+  logic [AXI_DMA_LEN_WIDTH-1:0] next_read_desc_len[0:JPEG_NUM_DECODERS-1];
+  logic [AXI_DMA_LEN_WIDTH-1:0] next_write_desc_len[0:JPEG_NUM_DECODERS-1];
   logic [31:0] capture_pixel_count[0:JPEG_NUM_DECODERS-1];
   logic [31:0] capture_byte_count[0:JPEG_NUM_DECODERS-1];
 
@@ -498,17 +496,13 @@ AXIS_KEEP_WIDTH + 1
   wire read_desc_fire;
   wire write_desc_fire;
 
-  wire [AXI_DMA_ADDR_WIDTH-1:0]
-      dma_read_desc_addr = task_src_addr[read_issue_decoder][AXI_DMA_ADDR_WIDTH-1:0];
-  wire [AXI_DMA_LEN_WIDTH-1:0]
-      dma_read_desc_len = next_read_desc_len[read_issue_decoder][AXI_DMA_LEN_WIDTH-1:0];
+  wire [AXI_DMA_ADDR_WIDTH-1:0] dma_read_desc_addr = task_src_addr[read_issue_decoder];
+  wire [AXI_DMA_LEN_WIDTH-1:0] dma_read_desc_len = next_read_desc_len[read_issue_decoder];
   wire dma_read_desc_valid = read_issue_valid;
   wire dma_read_desc_ready;
 
-  wire [AXI_DMA_ADDR_WIDTH-1:0]
-      dma_write_desc_addr = task_dst_addr[write_issue_decoder][AXI_DMA_ADDR_WIDTH-1:0];
-  wire [AXI_DMA_LEN_WIDTH-1:0]
-      dma_write_desc_len = next_write_desc_len[write_issue_decoder][AXI_DMA_LEN_WIDTH-1:0];
+  wire [AXI_DMA_ADDR_WIDTH-1:0] dma_write_desc_addr = task_dst_addr[write_issue_decoder];
+  wire [AXI_DMA_LEN_WIDTH-1:0] dma_write_desc_len = next_write_desc_len[write_issue_decoder];
   wire dma_write_desc_valid = write_issue_valid;
   wire dma_write_desc_ready;
 
@@ -538,8 +532,7 @@ AXIS_KEEP_WIDTH + 1
   logic [$clog2(AXIS_KEEP_WIDTH + 1)-1:0] active_out_fifo_tkeep_count;
   wire dma_read_data_fire = dma_read_data_tvalid && dma_read_data_tready;
   wire dma_write_data_fire = dma_write_data_tvalid && dma_write_data_tready;
-  wire [DECODER_IDX_WIDTH-1:0]
-      dma_write_status_decoder = dma_write_desc_status_tag[DECODER_IDX_WIDTH-1:0];
+  wire [DECODER_IDX_WIDTH-1:0] dma_write_status_decoder = dma_write_desc_status_tag;
   wire write_status_is_final = dma_write_desc_status_valid && (
       write_bytes_remaining[dma_write_status_decoder] == write_chunk_len[dma_write_status_decoder]);
 
