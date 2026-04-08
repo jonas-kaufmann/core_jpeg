@@ -1,0 +1,5 @@
+`verilator_config
+lint_off -file "*/axi/rtl/axi_dma_rd.v"
+lint_off -file "*/axi/rtl/axi_dma_wr.v"
+lint_off -file "*/axis/rtl/axis_fifo.v"
+lint_off -rule SELRANGE -file "*/axis/rtl/axis_fifo.v"
