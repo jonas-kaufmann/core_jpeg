@@ -87,19 +87,19 @@ module jpeg_top #(
     output wire                          m_axi_rready
 );
 
-  localparam int AXIS_DATA_WIDTH = AXI_DMA_DATA_WIDTH;
-  localparam int AXIS_KEEP_WIDTH = AXI_DMA_STRB_WIDTH;
-  localparam logic [DESC_FIFO_DEPTH_LOG2:0] DESC_FIFO_DEPTH = (1 << DESC_FIFO_DEPTH_LOG2);
-  localparam int INPUT_FIFO_DEPTH_BYTES = INPUT_FIFO_SLOTS * AXI_DMA_STRB_WIDTH;
-  localparam int OUTPUT_FIFO_DEPTH_BYTES = OUTPUT_FIFO_SLOTS * AXI_DMA_STRB_WIDTH;
-  localparam int AXI_DMA_BYTES_MAX = AXI_DMA_STRB_WIDTH * AXI_DMA_MAX_BURST_LEN;
-  localparam int AXI_DMA_LEN_MAX = INPUT_FIFO_DEPTH_BYTES > OUTPUT_FIFO_DEPTH_BYTES ?
-      INPUT_FIFO_DEPTH_BYTES : OUTPUT_FIFO_DEPTH_BYTES;
-  localparam int AXI_DMA_LEN_WIDTH = $clog2(AXI_DMA_LEN_MAX + 1);
-  localparam int DECODER_IDX_WIDTH = JPEG_NUM_DECODERS > 1 ? $clog2(JPEG_NUM_DECODERS) : 1;
-  localparam int DECODER_IDX_MASK = JPEG_NUM_DECODERS - 1;
-  localparam int INPUT_FIFO_OCC_WIDTH = $clog2(INPUT_FIFO_DEPTH_BYTES) + 1;
-  localparam int OUTPUT_FIFO_OCC_WIDTH = $clog2(OUTPUT_FIFO_DEPTH_BYTES) + 1;
+  localparam int AxisDataWidth = AXI_DMA_DATA_WIDTH;
+  localparam int AxisKeepWidth = AXI_DMA_STRB_WIDTH;
+  localparam logic [DESC_FIFO_DEPTH_LOG2:0] DescFifoDepth = (1 << DESC_FIFO_DEPTH_LOG2);
+  localparam int InputFifoDepthBytes = INPUT_FIFO_SLOTS * AXI_DMA_STRB_WIDTH;
+  localparam int OutputFifoDepthBytes = OUTPUT_FIFO_SLOTS * AXI_DMA_STRB_WIDTH;
+  localparam int AxiDmaBytesMax = AXI_DMA_STRB_WIDTH * AXI_DMA_MAX_BURST_LEN;
+  localparam int AxiDmaLenMax = InputFifoDepthBytes > OutputFifoDepthBytes ? InputFifoDepthBytes :
+      OutputFifoDepthBytes;
+  localparam int AxiDmaLenWidth = $clog2(AxiDmaLenMax + 1);
+  localparam int DecoderIdxWidth = JPEG_NUM_DECODERS > 1 ? $clog2(JPEG_NUM_DECODERS) : 1;
+  localparam int DecoderIdxMask = JPEG_NUM_DECODERS - 1;
+  localparam int InputFifoOccWidth = $clog2(InputFifoDepthBytes) + 1;
+  localparam int OutputFifoOccWidth = $clog2(OutputFifoDepthBytes) + 1;
 
   // Verify parameters
   generate
@@ -113,31 +113,31 @@ module jpeg_top #(
       initial
         $fatal(1, "Parameter JPEG_NUM_DECODERS (%0d) must be a power of two", JPEG_NUM_DECODERS);
     end
-    if (AXI_DMA_ID_WIDTH < DECODER_IDX_WIDTH) begin : gen_verify_param_axi_dma_id_width
+    if (AXI_DMA_ID_WIDTH < DecoderIdxWidth) begin : gen_verify_param_axi_dma_id_width
       initial
         $fatal(
             1,
             "Parameter AXI_DMA_ID_WIDTH (%0d) must be >= %0d to identify %0d decoders",
             AXI_DMA_ID_WIDTH,
-            DECODER_IDX_WIDTH,
+            DecoderIdxWidth,
             JPEG_NUM_DECODERS
         );
     end
   endgenerate
 
-  function automatic [$clog2(AXIS_KEEP_WIDTH + 1)-1:0] axis_keep_count;
-    input logic [AXIS_KEEP_WIDTH-1:0] keep;
+  function automatic [$clog2(AxisKeepWidth + 1)-1:0] axis_keep_count;
+    input logic [AxisKeepWidth-1:0] keep;
     int i;
     begin
       axis_keep_count = '0;
-      for (i = 0; i < AXIS_KEEP_WIDTH; i = i + 1) begin
+      for (i = 0; i < AxisKeepWidth; i = i + 1) begin
         axis_keep_count = axis_keep_count + keep[i];
       end
     end
   endfunction
 
   function automatic [AXI_DMA_ID_WIDTH-1:0] decoder_axi_id;
-    input logic [DECODER_IDX_WIDTH-1:0] decoder;
+    input logic [DecoderIdxWidth-1:0] decoder;
     begin
       decoder_axi_id = decoder;
     end
@@ -146,14 +146,14 @@ module jpeg_top #(
   // --------------------------------------------------------------------------
   // MMIO register map (byte offsets)
   // --------------------------------------------------------------------------
-  localparam logic [7:0] REG_DESC_SRC_ADDR = 8'h00;
-  localparam logic [7:0] REG_DESC_SRC_LEN = 8'h08;
-  localparam logic [7:0] REG_DESC_DST_ADDR = 8'h10;
-  localparam logic [7:0] REG_DESC_ID = 8'h18;
-  localparam logic [7:0] REG_DESC_COMMIT = 8'h20;
-  localparam logic [7:0] REG_DESC_FREE = 8'h28;
-  localparam logic [7:0] REG_CPL_STATUS = 8'h30;
-  localparam logic [7:0] REG_RESET = 8'h38;
+  localparam logic [7:0] RegDescRscAddr = 8'h00;
+  localparam logic [7:0] RegDescSrcLen = 8'h08;
+  localparam logic [7:0] RegDescDstAddr = 8'h10;
+  localparam logic [7:0] RegDescId = 8'h18;
+  localparam logic [7:0] RegDescCommit = 8'h20;
+  localparam logic [7:0] RegDescFree = 8'h28;
+  localparam logic [7:0] RegCplStatus = 8'h30;
+  localparam logic [7:0] RegReset = 8'h38;
 
   assign s_axil_bresp = 2'b0;
   assign s_axil_rresp = 2'b0;
@@ -182,28 +182,28 @@ module jpeg_top #(
   logic [7:0] wstrb_hold;
 
   // Descriptor FIFO
-  logic [63:0] desc_fifo_src_addr[0:DESC_FIFO_DEPTH-1];
-  logic [63:0] desc_fifo_src_len[0:DESC_FIFO_DEPTH-1];
-  logic [63:0] desc_fifo_dst_addr[0:DESC_FIFO_DEPTH-1];
-  logic [15:0] desc_fifo_id[0:DESC_FIFO_DEPTH-1];
+  logic [63:0] desc_fifo_src_addr[DescFifoDepth];
+  logic [63:0] desc_fifo_src_len[DescFifoDepth];
+  logic [63:0] desc_fifo_dst_addr[DescFifoDepth];
+  logic [15:0] desc_fifo_id[DescFifoDepth];
 
   logic [DESC_FIFO_DEPTH_LOG2-1:0] desc_fifo_wr_ptr;
   logic [DESC_FIFO_DEPTH_LOG2-1:0] desc_fifo_rd_ptr;
   logic [DESC_FIFO_DEPTH_LOG2:0] desc_fifo_count;
 
-  wire desc_fifo_full = (desc_fifo_count == DESC_FIFO_DEPTH);
+  wire desc_fifo_full = (desc_fifo_count == DescFifoDepth);
   wire desc_fifo_empty = (desc_fifo_count == '0);
 
   logic desc_fifo_push;
   logic desc_fifo_pop;
 
   // Completion FIFO
-  logic [63:0] cpl_fifo_data[0:DESC_FIFO_DEPTH-1];
+  logic [63:0] cpl_fifo_data[DescFifoDepth];
   logic [DESC_FIFO_DEPTH_LOG2-1:0] cpl_fifo_wr_ptr;
   logic [DESC_FIFO_DEPTH_LOG2-1:0] cpl_fifo_rd_ptr;
   logic [DESC_FIFO_DEPTH_LOG2:0] cpl_fifo_count;
 
-  wire cpl_fifo_full = (cpl_fifo_count == DESC_FIFO_DEPTH);
+  wire cpl_fifo_full = (cpl_fifo_count == DescFifoDepth);
   wire cpl_fifo_empty = (cpl_fifo_count == '0);
 
   wire cpl_fifo_push;
@@ -250,7 +250,7 @@ module jpeg_top #(
             axil_wr_state <= WR_RESP;
 
             unique case (awaddr_hold[7:0])
-              REG_DESC_SRC_ADDR: begin
+              RegDescRscAddr: begin
                 if (wstrb_hold[0]) mmio_desc_src_addr_reg[7:0] <= wdata_hold[7:0];
                 if (wstrb_hold[1]) mmio_desc_src_addr_reg[15:8] <= wdata_hold[15:8];
                 if (wstrb_hold[2]) mmio_desc_src_addr_reg[23:16] <= wdata_hold[23:16];
@@ -260,7 +260,7 @@ module jpeg_top #(
                 if (wstrb_hold[6]) mmio_desc_src_addr_reg[55:48] <= wdata_hold[55:48];
                 if (wstrb_hold[7]) mmio_desc_src_addr_reg[63:56] <= wdata_hold[63:56];
               end
-              REG_DESC_SRC_LEN: begin
+              RegDescSrcLen: begin
                 if (wstrb_hold[0]) mmio_desc_src_len_reg[7:0] <= wdata_hold[7:0];
                 if (wstrb_hold[1]) mmio_desc_src_len_reg[15:8] <= wdata_hold[15:8];
                 if (wstrb_hold[2]) mmio_desc_src_len_reg[23:16] <= wdata_hold[23:16];
@@ -270,7 +270,7 @@ module jpeg_top #(
                 if (wstrb_hold[6]) mmio_desc_src_len_reg[55:48] <= wdata_hold[55:48];
                 if (wstrb_hold[7]) mmio_desc_src_len_reg[63:56] <= wdata_hold[63:56];
               end
-              REG_DESC_DST_ADDR: begin
+              RegDescDstAddr: begin
                 if (wstrb_hold[0]) mmio_desc_dst_addr_reg[7:0] <= wdata_hold[7:0];
                 if (wstrb_hold[1]) mmio_desc_dst_addr_reg[15:8] <= wdata_hold[15:8];
                 if (wstrb_hold[2]) mmio_desc_dst_addr_reg[23:16] <= wdata_hold[23:16];
@@ -280,16 +280,16 @@ module jpeg_top #(
                 if (wstrb_hold[6]) mmio_desc_dst_addr_reg[55:48] <= wdata_hold[55:48];
                 if (wstrb_hold[7]) mmio_desc_dst_addr_reg[63:56] <= wdata_hold[63:56];
               end
-              REG_DESC_ID: begin
+              RegDescId: begin
                 if (wstrb_hold[0]) mmio_desc_id_reg[7:0] <= wdata_hold[7:0];
                 if (wstrb_hold[1]) mmio_desc_id_reg[15:8] <= wdata_hold[15:8];
               end
-              REG_DESC_COMMIT: begin
+              RegDescCommit: begin
                 if (!desc_fifo_full) begin
                   desc_fifo_push <= 1'b1;
                 end
               end
-              REG_RESET: begin
+              RegReset: begin
                 if (|wdata_hold) begin
                   mmio_reset_pulse <= 1'b1;
                 end
@@ -330,14 +330,14 @@ module jpeg_top #(
             s_axil_rvalid <= 1'b1;
             axil_rd_state <= RD_RESP;
             unique case (s_axil_araddr[7:0])
-              REG_DESC_SRC_ADDR: s_axil_rdata <= mmio_desc_src_addr_reg;
-              REG_DESC_SRC_LEN: s_axil_rdata <= mmio_desc_src_len_reg;
-              REG_DESC_DST_ADDR: s_axil_rdata <= mmio_desc_dst_addr_reg;
-              REG_DESC_ID: s_axil_rdata <= {{(64 - 16) {1'b0}}, mmio_desc_id_reg};
-              REG_DESC_FREE: begin
-                s_axil_rdata <= DESC_FIFO_DEPTH - desc_fifo_count;
+              RegDescRscAddr: s_axil_rdata <= mmio_desc_src_addr_reg;
+              RegDescSrcLen: s_axil_rdata <= mmio_desc_src_len_reg;
+              RegDescDstAddr: s_axil_rdata <= mmio_desc_dst_addr_reg;
+              RegDescId: s_axil_rdata <= {{(64 - 16) {1'b0}}, mmio_desc_id_reg};
+              RegDescFree: begin
+                s_axil_rdata <= DescFifoDepth - desc_fifo_count;
               end
-              REG_CPL_STATUS: begin
+              RegCplStatus: begin
                 if (!cpl_fifo_empty) begin
                   s_axil_rdata <= cpl_fifo_data[cpl_fifo_rd_ptr];
                   cpl_fifo_pop <= 1'b1;
@@ -421,116 +421,116 @@ module jpeg_top #(
     SLOT_RESET_HOLD
   } decoder_slot_state_t;
 
-  decoder_slot_state_t slot_state[0:JPEG_NUM_DECODERS-1];
+  decoder_slot_state_t slot_state[JPEG_NUM_DECODERS];
 
-  logic write_chunk_data_done[0:JPEG_NUM_DECODERS-1];
-  logic have_dimensions[0:JPEG_NUM_DECODERS-1];
-  logic core_reset_pulse[0:JPEG_NUM_DECODERS-1];
+  logic write_chunk_data_done[JPEG_NUM_DECODERS];
+  logic have_dimensions[JPEG_NUM_DECODERS];
+  logic core_reset_pulse[JPEG_NUM_DECODERS];
 
-  logic [AXI_DMA_ADDR_WIDTH-1:0] task_src_addr[0:JPEG_NUM_DECODERS-1];
-  logic [31:0] task_src_len[0:JPEG_NUM_DECODERS-1];
-  logic [AXI_DMA_ADDR_WIDTH-1:0] task_dst_addr[0:JPEG_NUM_DECODERS-1];
-  logic [AXI_DMA_LEN_WIDTH-1:0] read_chunk_len[0:JPEG_NUM_DECODERS-1];
-  logic [31:0] write_bytes_remaining[0:JPEG_NUM_DECODERS-1];
-  logic [AXI_DMA_LEN_WIDTH-1:0] write_chunk_len[0:JPEG_NUM_DECODERS-1];
-  logic [AXI_DMA_LEN_WIDTH-1:0] write_chunk_bytes_sent[0:JPEG_NUM_DECODERS-1];
-  logic [15:0] task_id[0:JPEG_NUM_DECODERS-1];
-  logic [15:0] img_width[0:JPEG_NUM_DECODERS-1];
-  logic [15:0] img_height[0:JPEG_NUM_DECODERS-1];
+  logic [AXI_DMA_ADDR_WIDTH-1:0] task_src_addr[JPEG_NUM_DECODERS];
+  logic [31:0] task_src_len[JPEG_NUM_DECODERS];
+  logic [AXI_DMA_ADDR_WIDTH-1:0] task_dst_addr[JPEG_NUM_DECODERS];
+  logic [AxiDmaLenWidth-1:0] read_chunk_len[JPEG_NUM_DECODERS];
+  logic [31:0] write_bytes_remaining[JPEG_NUM_DECODERS];
+  logic [AxiDmaLenWidth-1:0] write_chunk_len[JPEG_NUM_DECODERS];
+  logic [AxiDmaLenWidth-1:0] write_chunk_bytes_sent[JPEG_NUM_DECODERS];
+  logic [15:0] task_id[JPEG_NUM_DECODERS];
+  logic [15:0] img_width[JPEG_NUM_DECODERS];
+  logic [15:0] img_height[JPEG_NUM_DECODERS];
 
   logic read_service_active;
-  logic [DECODER_IDX_WIDTH-1:0] read_service_decoder;
-  logic [DECODER_IDX_WIDTH-1:0] read_rr_ptr;
+  logic [DecoderIdxWidth-1:0] read_service_decoder;
+  logic [DecoderIdxWidth-1:0] read_rr_ptr;
   logic write_service_active;
-  logic [DECODER_IDX_WIDTH-1:0] write_service_decoder;
-  logic [DECODER_IDX_WIDTH-1:0] write_rr_ptr;
+  logic [DecoderIdxWidth-1:0] write_service_decoder;
+  logic [DecoderIdxWidth-1:0] write_rr_ptr;
 
   logic desc_assign_valid;
-  logic [DECODER_IDX_WIDTH-1:0] desc_assign_decoder;
+  logic [DecoderIdxWidth-1:0] desc_assign_decoder;
 
-  logic [INPUT_FIFO_OCC_WIDTH-1:0] input_fifo_occupied_len[0:JPEG_NUM_DECODERS-1];
-  logic [INPUT_FIFO_OCC_WIDTH-1:0] input_fifo_free_bytes[0:JPEG_NUM_DECODERS-1];
+  logic [InputFifoOccWidth-1:0] input_fifo_occupied_len[JPEG_NUM_DECODERS];
+  logic [InputFifoOccWidth-1:0] input_fifo_free_bytes[JPEG_NUM_DECODERS];
   // Tracks bytes accepted into each output FIFO but not yet consumed by DMA. Even though axis_fifo
   // has the signal status_depth, this is not accurate since there is an internal buffering stage
   // before the output AXI-S interface. Data residing in this buffer is not accounted for via
   // status_depth.
-  logic [OUTPUT_FIFO_OCC_WIDTH-1:0] output_fifo_occupied_len[0:JPEG_NUM_DECODERS-1];
+  logic [OutputFifoOccWidth-1:0] output_fifo_occupied_len[JPEG_NUM_DECODERS];
 
-  logic [AXIS_DATA_WIDTH-1:0] in_fifo_tdata[0:JPEG_NUM_DECODERS-1];
-  logic [AXIS_KEEP_WIDTH-1:0] in_fifo_tkeep[0:JPEG_NUM_DECODERS-1];
-  logic in_fifo_tvalid[0:JPEG_NUM_DECODERS-1];
-  logic in_fifo_tready[0:JPEG_NUM_DECODERS-1];
-  logic in_fifo_tlast[0:JPEG_NUM_DECODERS-1];
-  logic in_fifo_dma_tready[0:JPEG_NUM_DECODERS-1];
+  logic [AxisDataWidth-1:0] in_fifo_tdata[JPEG_NUM_DECODERS];
+  logic [AxisKeepWidth-1:0] in_fifo_tkeep[JPEG_NUM_DECODERS];
+  logic in_fifo_tvalid[JPEG_NUM_DECODERS];
+  logic in_fifo_tready[JPEG_NUM_DECODERS];
+  logic in_fifo_tlast[JPEG_NUM_DECODERS];
+  logic in_fifo_dma_tready[JPEG_NUM_DECODERS];
 
-  logic [15:0] core_out_width[0:JPEG_NUM_DECODERS-1];
-  logic [15:0] core_out_height[0:JPEG_NUM_DECODERS-1];
-  logic core_rst[0:JPEG_NUM_DECODERS-1];
+  logic [15:0] core_out_width[JPEG_NUM_DECODERS];
+  logic [15:0] core_out_height[JPEG_NUM_DECODERS];
+  logic core_rst[JPEG_NUM_DECODERS];
 
-  logic [AXIS_DATA_WIDTH-1:0] core_out_tdata[0:JPEG_NUM_DECODERS-1];
-  logic [AXIS_KEEP_WIDTH-1:0] core_out_tkeep[0:JPEG_NUM_DECODERS-1];
-  logic core_out_tvalid[0:JPEG_NUM_DECODERS-1];
-  logic core_out_tready[0:JPEG_NUM_DECODERS-1];
-  logic core_out_tlast[0:JPEG_NUM_DECODERS-1];
-  logic core_dims_valid[0:JPEG_NUM_DECODERS-1];
+  logic [AxisDataWidth-1:0] core_out_tdata[JPEG_NUM_DECODERS];
+  logic [AxisKeepWidth-1:0] core_out_tkeep[JPEG_NUM_DECODERS];
+  logic core_out_tvalid[JPEG_NUM_DECODERS];
+  logic core_out_tready[JPEG_NUM_DECODERS];
+  logic core_out_tlast[JPEG_NUM_DECODERS];
+  logic core_dims_valid[JPEG_NUM_DECODERS];
 
-  logic [AXIS_DATA_WIDTH-1:0] out_fifo_tdata[0:JPEG_NUM_DECODERS-1];
-  logic [AXIS_KEEP_WIDTH-1:0] out_fifo_tkeep[0:JPEG_NUM_DECODERS-1];
-  logic out_fifo_tvalid[0:JPEG_NUM_DECODERS-1];
-  logic out_fifo_tready[0:JPEG_NUM_DECODERS-1];
-  logic out_fifo_tlast[0:JPEG_NUM_DECODERS-1];
-  logic out_fifo_tready_dma[0:JPEG_NUM_DECODERS-1];
+  logic [AxisDataWidth-1:0] out_fifo_tdata[JPEG_NUM_DECODERS];
+  logic [AxisKeepWidth-1:0] out_fifo_tkeep[JPEG_NUM_DECODERS];
+  logic out_fifo_tvalid[JPEG_NUM_DECODERS];
+  logic out_fifo_tready[JPEG_NUM_DECODERS];
+  logic out_fifo_tlast[JPEG_NUM_DECODERS];
+  logic out_fifo_tready_dma[JPEG_NUM_DECODERS];
 
-  logic can_issue_read_desc[0:JPEG_NUM_DECODERS-1];
-  logic can_issue_write_desc[0:JPEG_NUM_DECODERS-1];
-  logic [AXI_DMA_LEN_WIDTH-1:0] next_read_desc_len[0:JPEG_NUM_DECODERS-1];
-  logic [AXI_DMA_LEN_WIDTH-1:0] next_write_desc_len[0:JPEG_NUM_DECODERS-1];
+  logic can_issue_read_desc[JPEG_NUM_DECODERS];
+  logic can_issue_write_desc[JPEG_NUM_DECODERS];
+  logic [AxiDmaLenWidth-1:0] next_read_desc_len[JPEG_NUM_DECODERS];
+  logic [AxiDmaLenWidth-1:0] next_write_desc_len[JPEG_NUM_DECODERS];
 
   logic read_issue_valid;
-  logic [DECODER_IDX_WIDTH-1:0] read_issue_decoder;
+  logic [DecoderIdxWidth-1:0] read_issue_decoder;
   logic write_issue_valid;
-  logic [DECODER_IDX_WIDTH-1:0] write_issue_decoder;
+  logic [DecoderIdxWidth-1:0] write_issue_decoder;
 
   wire read_desc_fire;
   wire write_desc_fire;
 
   wire [AXI_DMA_ADDR_WIDTH-1:0] dma_read_desc_addr = task_src_addr[read_issue_decoder];
-  wire [AXI_DMA_LEN_WIDTH-1:0] dma_read_desc_len = next_read_desc_len[read_issue_decoder];
+  wire [AxiDmaLenWidth-1:0] dma_read_desc_len = next_read_desc_len[read_issue_decoder];
   wire dma_read_desc_valid = read_issue_valid;
   wire dma_read_desc_ready;
 
   wire [AXI_DMA_ADDR_WIDTH-1:0] dma_write_desc_addr = task_dst_addr[write_issue_decoder];
-  wire [AXI_DMA_LEN_WIDTH-1:0] dma_write_desc_len = next_write_desc_len[write_issue_decoder];
+  wire [AxiDmaLenWidth-1:0] dma_write_desc_len = next_write_desc_len[write_issue_decoder];
   wire dma_write_desc_valid = write_issue_valid;
   wire dma_write_desc_ready;
 
-  wire [AXIS_DATA_WIDTH-1:0] dma_read_data_tdata;
-  wire [AXIS_KEEP_WIDTH-1:0] dma_read_data_tkeep;
+  wire [AxisDataWidth-1:0] dma_read_data_tdata;
+  wire [AxisKeepWidth-1:0] dma_read_data_tkeep;
   wire dma_read_data_tvalid;
   logic dma_read_data_tready;
   wire dma_read_data_tlast;
   wire [AXI_DMA_ID_WIDTH-1:0] dma_read_data_tid;
 
-  logic [AXIS_DATA_WIDTH-1:0] dma_write_data_tdata;
-  logic [AXIS_KEEP_WIDTH-1:0] dma_write_data_tkeep;
+  logic [AxisDataWidth-1:0] dma_write_data_tdata;
+  logic [AxisKeepWidth-1:0] dma_write_data_tkeep;
   logic dma_write_data_tvalid;
   wire dma_write_data_tready;
   logic dma_write_data_tlast;
   logic [AXI_DMA_ID_WIDTH-1:0] dma_write_data_tid;
 
-  wire [DECODER_IDX_WIDTH-1:0] dma_read_desc_status_tag;
+  wire [DecoderIdxWidth-1:0] dma_read_desc_status_tag;
   wire [3:0] dma_read_desc_status_error;
   wire dma_read_desc_status_valid;
-  wire [AXI_DMA_LEN_WIDTH-1:0] dma_write_desc_status_len;
-  wire [DECODER_IDX_WIDTH-1:0] dma_write_desc_status_tag;
+  wire [AxiDmaLenWidth-1:0] dma_write_desc_status_len;
+  wire [DecoderIdxWidth-1:0] dma_write_desc_status_tag;
   wire [AXI_DMA_ID_WIDTH-1:0] dma_write_desc_status_id;
   wire [3:0] dma_write_desc_status_error;
   wire dma_write_desc_status_valid;
 
-  logic [$clog2(AXIS_KEEP_WIDTH + 1)-1:0] active_out_fifo_tkeep_count;
+  logic [$clog2(AxisKeepWidth + 1)-1:0] active_out_fifo_tkeep_count;
   wire dma_read_data_fire = dma_read_data_tvalid && dma_read_data_tready;
   wire dma_write_data_fire = dma_write_data_tvalid && dma_write_data_tready;
-  wire [DECODER_IDX_WIDTH-1:0] dma_write_status_decoder = dma_write_desc_status_tag;
+  wire [DecoderIdxWidth-1:0] dma_write_status_decoder = dma_write_desc_status_tag;
   wire write_status_is_final = dma_write_desc_status_valid && (
       write_bytes_remaining[dma_write_status_decoder] == write_chunk_len[dma_write_status_decoder]);
 
@@ -542,7 +542,7 @@ module jpeg_top #(
     for (i = 0; i < JPEG_NUM_DECODERS; i = i + 1) begin
       if (!desc_assign_valid && slot_state[i] == SLOT_IDLE) begin
         desc_assign_valid   = 1'b1;
-        desc_assign_decoder = DECODER_IDX_WIDTH'(i);
+        desc_assign_decoder = DecoderIdxWidth'(i);
       end
     end
   end
@@ -552,7 +552,7 @@ module jpeg_top #(
   // Read arbitration walks eligible decoders in round-robin order.
   always_comb begin
     integer i;
-    logic [DECODER_IDX_WIDTH-1:0] decoder_idx = read_rr_ptr;
+    logic [DecoderIdxWidth-1:0] decoder_idx = read_rr_ptr;
     read_issue_valid   = 1'b0;
     read_issue_decoder = '0;
     for (i = 0; i < JPEG_NUM_DECODERS; i = i + 1) begin
@@ -567,7 +567,7 @@ module jpeg_top #(
   // Write arbitration walks eligible decoders in round-robin order.
   always_comb begin
     integer i;
-    logic [DECODER_IDX_WIDTH-1:0] decoder_idx = write_rr_ptr;
+    logic [DecoderIdxWidth-1:0] decoder_idx = write_rr_ptr;
     write_issue_valid   = 1'b0;
     write_issue_decoder = '0;
     for (i = 0; i < JPEG_NUM_DECODERS; i = i + 1) begin
@@ -590,8 +590,8 @@ module jpeg_top #(
       next_read_desc_len[i] = 0;
       next_write_desc_len[i] = 0;
 
-      input_fifo_free_bytes[i] = (INPUT_FIFO_DEPTH_BYTES -
-                                  input_fifo_occupied_len[i]) & ~(AXI_DMA_STRB_WIDTH - 1);
+      input_fifo_free_bytes[i] =
+          (InputFifoDepthBytes - input_fifo_occupied_len[i]) & ~(AXI_DMA_STRB_WIDTH - 1);
       can_issue_read_desc[i] = (slot_state[i] == SLOT_RUN) && task_src_len[i] &&
           input_fifo_free_bytes[i];
       if (can_issue_read_desc[i]) begin
@@ -615,7 +615,7 @@ module jpeg_top #(
     integer i;
     dma_read_data_tready = 1'b0;
     if (dma_read_data_tvalid) begin
-      dma_read_data_tready = in_fifo_dma_tready[DECODER_IDX_WIDTH'(dma_read_data_tid)];
+      dma_read_data_tready = in_fifo_dma_tready[DecoderIdxWidth'(dma_read_data_tid)];
     end
   end
 
@@ -673,15 +673,15 @@ module jpeg_top #(
       for (i = 0; i < JPEG_NUM_DECODERS; i = i + 1) begin
         bit pushed;
         bit popped;
-        logic [OUTPUT_FIFO_OCC_WIDTH-1:0] bytes_pushed;
-        logic [OUTPUT_FIFO_OCC_WIDTH-1:0] bytes_popped;
+        logic [OutputFifoOccWidth-1:0] bytes_pushed;
+        logic [OutputFifoOccWidth-1:0] bytes_popped;
 
         core_reset_pulse[i] <= 1'b0;
 
         pushed = core_out_tvalid[i] && out_fifo_tready[i];
         popped = out_fifo_tvalid[i] && out_fifo_tready_dma[i];
-        bytes_pushed = axis_keep_count(core_out_tkeep[i]) & {OUTPUT_FIFO_OCC_WIDTH{pushed}};
-        bytes_popped = axis_keep_count(out_fifo_tkeep[i]) & {OUTPUT_FIFO_OCC_WIDTH{popped}};
+        bytes_pushed = axis_keep_count(core_out_tkeep[i]) & {OutputFifoOccWidth{pushed}};
+        bytes_popped = axis_keep_count(out_fifo_tkeep[i]) & {OutputFifoOccWidth{popped}};
         output_fifo_occupied_len[i] <= output_fifo_occupied_len[i] + bytes_pushed - bytes_popped;
 
         unique case (slot_state[i])
@@ -786,8 +786,8 @@ module jpeg_top #(
       .AXIS_ID_WIDTH(AXI_DMA_ID_WIDTH),
       .AXIS_DEST_ENABLE(0),
       .AXIS_USER_ENABLE(0),
-      .LEN_WIDTH(AXI_DMA_LEN_WIDTH),
-      .TAG_WIDTH(DECODER_IDX_WIDTH),
+      .LEN_WIDTH(AxiDmaLenWidth),
+      .TAG_WIDTH(DecoderIdxWidth),
       .ENABLE_SG(0),
       .ENABLE_UNALIGNED(0)
   ) dma_inst (
@@ -879,10 +879,10 @@ module jpeg_top #(
       assign core_rst[g] = rst || mmio_reset_pulse || core_reset_pulse[g];
 
       axis_fifo #(
-          .DEPTH(INPUT_FIFO_DEPTH_BYTES),
-          .DATA_WIDTH(AXIS_DATA_WIDTH),
+          .DEPTH(InputFifoDepthBytes),
+          .DATA_WIDTH(AxisDataWidth),
           .KEEP_ENABLE(1),
-          .KEEP_WIDTH(AXIS_KEEP_WIDTH),
+          .KEEP_WIDTH(AxisKeepWidth),
           .LAST_ENABLE(1),
           .ID_ENABLE(0),
           .DEST_ENABLE(0),
@@ -896,7 +896,7 @@ module jpeg_top #(
           .s_axis_tdata(dma_read_data_tdata),
           .s_axis_tkeep(dma_read_data_tkeep),
           .s_axis_tvalid(dma_read_data_tvalid && (dma_read_data_tid == decoder_axi_id(
-              DECODER_IDX_WIDTH'(g)
+              DecoderIdxWidth'(g)
           ))),
           .s_axis_tready(in_fifo_dma_tready[g]),
           .s_axis_tlast(dma_read_data_tlast),
@@ -922,8 +922,8 @@ module jpeg_top #(
 
       jpeg_core_wrapper #(
           .JPEG_SUPPORT_WRITABLE_DHT(JPEG_SUPPORT_WRITABLE_DHT),
-          .AXIS_DATA_WIDTH(AXIS_DATA_WIDTH),
-          .AXIS_KEEP_WIDTH(AXIS_KEEP_WIDTH)
+          .AXIS_DATA_WIDTH(AxisDataWidth),
+          .AXIS_KEEP_WIDTH(AxisKeepWidth)
       ) jpeg_core_inst (
           .clk(clk),
           .rst(core_rst[g]),
@@ -946,10 +946,10 @@ module jpeg_top #(
       assign core_out_tready[g] = out_fifo_tready[g];
 
       axis_fifo #(
-          .DEPTH(OUTPUT_FIFO_DEPTH_BYTES),
-          .DATA_WIDTH(AXIS_DATA_WIDTH),
+          .DEPTH(OutputFifoDepthBytes),
+          .DATA_WIDTH(AxisDataWidth),
           .KEEP_ENABLE(1),
-          .KEEP_WIDTH(AXIS_KEEP_WIDTH),
+          .KEEP_WIDTH(AxisKeepWidth),
           .LAST_ENABLE(1),
           .ID_ENABLE(0),
           .DEST_ENABLE(0),
@@ -986,7 +986,7 @@ module jpeg_top #(
       );
 
       assign out_fifo_tready_dma[g] = write_service_active &&
-          (write_service_decoder == DECODER_IDX_WIDTH'(g)) && !write_chunk_data_done[g] &&
+          (write_service_decoder == DecoderIdxWidth'(g)) && !write_chunk_data_done[g] &&
           dma_write_data_tready;
     end
   endgenerate
