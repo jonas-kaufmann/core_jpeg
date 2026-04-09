@@ -450,6 +450,10 @@ module jpeg_top #(
 
   logic [INPUT_FIFO_OCC_WIDTH-1:0] input_fifo_occupied_len[0:JPEG_NUM_DECODERS-1];
   logic [INPUT_FIFO_OCC_WIDTH-1:0] input_fifo_free_bytes[0:JPEG_NUM_DECODERS-1];
+  // Tracks bytes accepted into each output FIFO but not yet consumed by DMA. Even though axis_fifo
+  // has the signal status_depth, this is not accurate since there is an internal buffering stage
+  // before the output AXI-S interface. Data residing in this buffer is not accounted for via
+  // status_depth.
   logic [OUTPUT_FIFO_OCC_WIDTH-1:0] output_fifo_occupied_len[0:JPEG_NUM_DECODERS-1];
 
   logic [AXIS_DATA_WIDTH-1:0] in_fifo_tdata[0:JPEG_NUM_DECODERS-1];
@@ -653,6 +657,7 @@ module jpeg_top #(
         write_chunk_data_done[i] <= 1'b0;
         have_dimensions[i] <= 1'b0;
         core_reset_pulse[i] <= 1'b0;
+        output_fifo_occupied_len[i] <= '0;
         task_src_addr[i] <= 64'd0;
         task_src_len[i] <= 64'd0;
         task_dst_addr[i] <= 64'd0;
@@ -666,7 +671,18 @@ module jpeg_top #(
       end
     end else begin
       for (i = 0; i < JPEG_NUM_DECODERS; i = i + 1) begin
+        bit pushed;
+        bit popped;
+        logic [OUTPUT_FIFO_OCC_WIDTH-1:0] bytes_pushed;
+        logic [OUTPUT_FIFO_OCC_WIDTH-1:0] bytes_popped;
+
         core_reset_pulse[i] <= 1'b0;
+
+        pushed = core_out_tvalid[i] && out_fifo_tready[i];
+        popped = out_fifo_tvalid[i] && out_fifo_tready_dma[i];
+        bytes_pushed = axis_keep_count(core_out_tkeep[i]) & {OUTPUT_FIFO_OCC_WIDTH{pushed}};
+        bytes_popped = axis_keep_count(out_fifo_tkeep[i]) & {OUTPUT_FIFO_OCC_WIDTH{popped}};
+        output_fifo_occupied_len[i] <= output_fifo_occupied_len[i] + bytes_pushed - bytes_popped;
 
         unique case (slot_state[i])
           SLOT_RESET_PULSE: begin
@@ -697,6 +713,7 @@ module jpeg_top #(
         slot_state[desc_assign_decoder] <= SLOT_RUN;
         write_chunk_data_done[desc_assign_decoder] <= 1'b0;
         have_dimensions[desc_assign_decoder] <= 1'b0;
+        output_fifo_occupied_len[desc_assign_decoder] <= '0;
         task_src_addr[desc_assign_decoder] <= desc_fifo_src_addr[desc_fifo_rd_ptr];
         task_src_len[desc_assign_decoder] <= desc_fifo_src_len[desc_fifo_rd_ptr];
         task_dst_addr[desc_assign_decoder] <= desc_fifo_dst_addr[desc_fifo_rd_ptr];
@@ -962,7 +979,7 @@ module jpeg_top #(
           .pause_req(1'b0),
           .pause_ack(),
           .status_depth(),
-          .status_depth_commit(output_fifo_occupied_len[g]),
+          .status_depth_commit(),
           .status_overflow(),
           .status_bad_frame(),
           .status_good_frame()
