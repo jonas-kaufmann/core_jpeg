@@ -106,9 +106,9 @@ class BufferPool {
 };
 
 // support decoding images up to 4096x4096 pixels
-using DstBufferPool = BufferPool<4, 4096 * 4096 * 3>;
+using DstBufferPool = BufferPool<24, 4096 * 4096 * 3>;
 // assume images are at least half 50% compressed
-using SrcBufferPool = BufferPool<4, 4096 * 4096 * 3 / 2>;
+using SrcBufferPool = BufferPool<24, 4096 * 4096 * 3 / 2>;
 
 bool InitGlobalDma();
 
