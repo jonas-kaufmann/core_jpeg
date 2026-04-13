@@ -154,6 +154,7 @@ module jpeg_top #(
   localparam logic [7:0] RegDescFree = 8'h28;
   localparam logic [7:0] RegCplStatus = 8'h30;
   localparam logic [7:0] RegReset = 8'h38;
+  localparam logic [7:0] RegClockGateEnable = 8'h40;
 
   assign s_axil_bresp = 2'b0;
   assign s_axil_rresp = 2'b0;
@@ -162,6 +163,7 @@ module jpeg_top #(
   logic [63:0] mmio_desc_src_len_reg;
   logic [63:0] mmio_desc_dst_addr_reg;
   logic [15:0] mmio_desc_id_reg;
+  logic mmio_clk_gate_enable_reg;
   logic mmio_reset_pulse;
 
   typedef enum logic {
@@ -223,6 +225,7 @@ module jpeg_top #(
       mmio_desc_src_len_reg <= 64'd0;
       mmio_desc_dst_addr_reg <= 64'd0;
       mmio_desc_id_reg <= 16'd0;
+      mmio_clk_gate_enable_reg <= 1'b0;
       aw_stored <= 1'b0;
       w_stored <= 1'b0;
       awaddr_hold <= '0;
@@ -294,6 +297,11 @@ module jpeg_top #(
                   mmio_reset_pulse <= 1'b1;
                 end
               end
+              RegClockGateEnable: begin
+                if (wstrb_hold[0]) begin
+                  mmio_clk_gate_enable_reg <= wdata_hold[0];
+                end
+              end
               default: begin
               end
             endcase
@@ -345,6 +353,7 @@ module jpeg_top #(
                   s_axil_rdata <= 64'd0;
                 end
               end
+              RegClockGateEnable: s_axil_rdata <= {{63{1'b0}}, mmio_clk_gate_enable_reg};
               default: s_axil_rdata <= 64'd0;
             endcase
           end
@@ -878,10 +887,11 @@ module jpeg_top #(
       wire  decoder_clk;
       logic decoder_clk_en;
 
-      // Each decoder gets private input/output buffering and a dedicated core instance. Gate this
-      // island only while the slot is idle, but force the clock on during resets so the local
-      // synchronous reset inputs are observed.
-      assign decoder_clk_en = rst || mmio_reset_pulse || (slot_state[g] != SLOT_IDLE);
+      // Each decoder gets private input/output buffering and a dedicated core instance. When MMIO
+      // clock gating is enabled, gate this island only while the slot is idle. Force the clock on
+      // during resets so the local synchronous reset inputs are observed.
+      assign decoder_clk_en = rst || mmio_reset_pulse || !mmio_clk_gate_enable_reg ||
+          (slot_state[g] != SLOT_IDLE);
       assign core_rst[g] = rst || mmio_reset_pulse || core_reset_pulse[g];
 
       BUFGCE decoder_clk_bufgce (
