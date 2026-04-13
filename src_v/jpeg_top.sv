@@ -875,8 +875,20 @@ module jpeg_top #(
   genvar g;
   generate
     for (g = 0; g < JPEG_NUM_DECODERS; g = g + 1) begin : gen_decoder
-      // Each decoder gets private input/output buffering and a dedicated core instance.
+      wire  decoder_clk;
+      logic decoder_clk_en;
+
+      // Each decoder gets private input/output buffering and a dedicated core instance. Gate this
+      // island only while the slot is idle, but force the clock on during resets so the local
+      // synchronous reset inputs are observed.
+      assign decoder_clk_en = rst || mmio_reset_pulse || (slot_state[g] != SLOT_IDLE);
       assign core_rst[g] = rst || mmio_reset_pulse || core_reset_pulse[g];
+
+      BUFGCE decoder_clk_bufgce (
+          .I (clk),
+          .CE(decoder_clk_en),
+          .O (decoder_clk)
+      );
 
       axis_fifo #(
           .DEPTH(InputFifoDepthBytes),
@@ -891,7 +903,7 @@ module jpeg_top #(
           .RAM_PIPELINE(1),
           .OUTPUT_FIFO_ENABLE(0)
       ) input_fifo (
-          .clk(clk),
+          .clk(decoder_clk),
           .rst(core_rst[g]),
           .s_axis_tdata(dma_read_data_tdata),
           .s_axis_tkeep(dma_read_data_tkeep),
@@ -925,7 +937,7 @@ module jpeg_top #(
           .AXIS_DATA_WIDTH(AxisDataWidth),
           .AXIS_KEEP_WIDTH(AxisKeepWidth)
       ) jpeg_core_inst (
-          .clk(clk),
+          .clk(decoder_clk),
           .rst(core_rst[g]),
           .s_axis_tdata(in_fifo_tdata[g]),
           .s_axis_tkeep(in_fifo_tkeep[g]),
@@ -958,7 +970,7 @@ module jpeg_top #(
           .RAM_PIPELINE(1),
           .OUTPUT_FIFO_ENABLE(0)
       ) output_fifo (
-          .clk(clk),
+          .clk(decoder_clk),
           .rst(core_rst[g]),
           .s_axis_tdata(core_out_tdata[g]),
           .s_axis_tkeep(core_out_tkeep[g]),

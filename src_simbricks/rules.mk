@@ -2,13 +2,14 @@ include mk/subdir_pre.mk
 
 VERILATOR_MDIR := $(d)obj_dir
 JPEG_SRC_V := $(d)../src_v/
+XLNX_PRIMS_SRC_V := $(d)xilinx_primitives_verilator
 JPEG_AXI_RTL := $(JPEG_SRC_V)axi/rtl/
 JPEG_AXIS_RTL := $(JPEG_SRC_V)axis/rtl/
 
 ADDITIONAL_CFLAGS ?=
 ADDITIONAL_VFLAGS ?=
 BASE_CFLAGS := -I$(abspath $(lib_dir)) -std=c++17 $(ADDITIONAL_CFLAGS)
-BASE_VFLAGS := -I$(abspath $(d)) -y $(JPEG_SRC_V) -y $(JPEG_AXI_RTL) -y $(JPEG_AXIS_RTL) -Wno-fatal --threads 1 -j `nproc` -O3 --compiler clang -MAKEFLAGS "OPT=-march=native" -Wno-TIMESCALEMOD -Wno-WIDTHTRUNC -Wno-WIDTHEXPAND $(JPEG_SRC_V)lint.vlt --Mdir $(VERILATOR_MDIR) --cc --build --exe
+BASE_VFLAGS := -I$(abspath $(d)) -y $(JPEG_SRC_V) -y $(JPEG_AXI_RTL) -y $(JPEG_AXIS_RTL) -y $(XLNX_PRIMS_SRC_V) -Wno-fatal --threads 1 -j `nproc` -O3 --compiler clang -MAKEFLAGS "OPT=-march=native" -Wno-TIMESCALEMOD -Wno-WIDTHTRUNC -Wno-WIDTHEXPAND $(JPEG_SRC_V)lint.vlt --Mdir $(VERILATOR_MDIR) --cc --build --exe
 BASE_LDFLAGS := -fuse-ld=lld-20
 
 NO_TRACE_CFLAGS := $(BASE_CFLAGS) $(ADDITIONAL_CFLAGS) -DTRACE_MODE=0
