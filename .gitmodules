@@ -4,3 +4,6 @@
 [submodule "src_v/axis"]
 	path = src_v/axis
 	url = https://github.com/alexforencich/verilog-axis.git
+[submodule "src_simbricks/xilinx_primitives_verilator"]
+	path = src_simbricks/xilinx_primitives_verilator
+	url = https://github.com/jonas-kaufmann/xilinx_primitives_verilator
