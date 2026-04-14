@@ -78,6 +78,10 @@ bool HardwareDecoderManagerThreadMain(volatile jpeg_regs *jpeg_dev,
   jpeg_dev->reset = 1;
   mmio_write_barrier();
 
+  std::cout << __func__
+            << "(): number of free descriptors: " << jpeg_dev->desc_num_free
+            << "\n";
+
   queues->load_to_decode.WaitForEntry();
 
   while (num_completed < total_images) {
