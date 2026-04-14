@@ -6,6 +6,8 @@ c_model/jpeg
 
 src_simbricks/.cache
 src_simbricks/jpeg_rtl_sim_*
+src_simbricks/jpeg_synth_sim_*
+src_simbricks/jpeg_top_bd_synth.v
 src_simbricks/obj_dir/
 
 src_sw/.cache
