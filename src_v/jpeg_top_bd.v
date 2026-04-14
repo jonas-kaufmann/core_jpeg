@@ -3,7 +3,7 @@
 `default_nettype none
 
 module jpeg_top_bd #(
-    parameter JPEG_NUM_DECODERS = 1,
+    parameter JPEG_NUM_DECODERS = 16,
     parameter DESC_FIFO_DEPTH_LOG2 = 4
 ) (
     input wire clk,
