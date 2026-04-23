@@ -4,7 +4,7 @@
 
 module jpeg_top #(
     parameter unsigned JPEG_SUPPORT_WRITABLE_DHT = `JPEG_SUPPORT_WRITABLE_DHT,
-    parameter unsigned JPEG_NUM_DECODERS = 1,
+    parameter unsigned JPEG_NUM_DECODERS = 2,
     parameter unsigned DESC_FIFO_DEPTH_LOG2 = 4,
     parameter unsigned INPUT_FIFO_SLOTS = 32,
     parameter unsigned OUTPUT_FIFO_SLOTS = 64,
