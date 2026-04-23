@@ -1,3 +1,4 @@
+#include <chrono>
 #include <cstdint>
 #include <cstring>
 #include <exception>
@@ -80,6 +81,8 @@ struct SimbricksPcieIf pcieif;
 bool synchronized = false;
 uint8_t num_adapters_ticked = 0;
 bool pseudo_synchronized = true;
+uint64_t sim_start_ts;
+std::chrono::time_point<std::chrono::steady_clock> sim_start_real;
 
 volatile union SimbricksProtoPcieD2H *d2h_alloc(uint64_t cur_ts) {
   volatile union SimbricksProtoPcieD2H *msg;
@@ -298,10 +301,18 @@ bool h2d_write(volatile struct SimbricksProtoPcieH2DWrite &write, bool posted) {
                   << simbricks_time << " hardware_time=" << hardware_time
                   << std::endl;
         pseudo_synchronized = false;
+        sim_start_ts = hardware_time;
+        sim_start_real = std::chrono::steady_clock::now();
       } else if (!pseudo_synchronized && data == 0) {
+        auto sim_ps = hardware_time - sim_start_ts;
+        auto sim_real_seconds =
+            std::chrono::duration_cast<std::chrono::seconds>(
+                std::chrono::steady_clock::now() - sim_start_real)
+                .count();
         std::cout << "Enabling pseudo-synchronization at simbricks_time="
                   << simbricks_time << " hardware_time=" << hardware_time
-                  << std::endl;
+                  << " sim_ps=" << sim_ps
+                  << " sim_real_seconds=" << sim_real_seconds << std::endl;
         pseudo_synchronized = true;
       }
       break;
