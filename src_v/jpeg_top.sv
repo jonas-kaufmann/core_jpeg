@@ -495,6 +495,12 @@ module jpeg_top #(
   logic out_fifo_tready[JPEG_NUM_DECODERS];
   logic out_fifo_tlast[JPEG_NUM_DECODERS];
   logic out_fifo_tready_dma[JPEG_NUM_DECODERS];
+  wire [JPEG_NUM_DECODERS*AxisDataWidth-1:0] dma_write_mux_tdata;
+  wire [JPEG_NUM_DECODERS*AxisKeepWidth-1:0] dma_write_mux_tkeep;
+  wire [JPEG_NUM_DECODERS-1:0] dma_write_mux_tvalid;
+  wire [JPEG_NUM_DECODERS-1:0] dma_write_mux_tready;
+  wire [JPEG_NUM_DECODERS-1:0] dma_write_mux_tlast;
+  wire [JPEG_NUM_DECODERS*DecoderIdxWidth-1:0] dma_write_mux_tid;
 
   logic [AXI_DMA_ADDR_WIDTH-1:0] dma_read_desc_addr;
   logic [AxiDmaLenWidth-1:0] dma_read_desc_len;
@@ -507,7 +513,7 @@ module jpeg_top #(
   wire dma_write_desc_ready;
 
   logic [DecoderIdxWidth-1:0] dma_read_decoder;
-  logic [DecoderIdxWidth-1:0] dma_write_decoder;
+  logic [DecoderIdxWidth-1:0] dma_write_desc_decoder;
 
   wire dma_read_desc_fire;
   wire dma_write_desc_fire;
@@ -535,7 +541,11 @@ module jpeg_top #(
   wire [3:0] dma_write_desc_status_error;
   wire dma_write_desc_status_valid;
 
-  logic [$clog2(AxisKeepWidth + 1)-1:0] active_out_fifo_tkeep_count;
+  wire [$clog2(
+AxisKeepWidth + 1
+)-1:0] active_out_fifo_tkeep_count = axis_keep_count(
+      dma_write_data_tkeep
+  );
   wire dma_read_data_fire = dma_read_data_tvalid && dma_read_data_tready;
   wire dma_write_data_fire = dma_write_data_tvalid && dma_write_data_tready;
   wire [DecoderIdxWidth-1:0] dma_write_status_decoder = dma_write_desc_status_tag;
@@ -601,8 +611,9 @@ module jpeg_top #(
     bit picked_decoder = 0;
     logic [DecoderIdxWidth-1:0] decoder_idx = write_rr_ptr;  // walk decoders in round-robin order
     dma_write_desc_valid <= 0;
-    dma_write_decoder <= 0;
+    dma_write_desc_decoder <= 0;
     dma_write_desc_len <= 0;
+    dma_write_desc_addr <= 0;
 
     for (i = 0; i < JPEG_NUM_DECODERS; i = i + 1) begin
       bit can_issue_write = 0;
@@ -613,11 +624,11 @@ module jpeg_top #(
 
         if (can_issue_write) begin
           dma_write_desc_valid <= 1;
-          dma_write_decoder <= decoder_idx;
+          dma_write_desc_decoder <= decoder_idx;
           dma_write_desc_len <=
               write_bytes_remaining[decoder_idx] < output_fifo_occupied_len[decoder_idx] ?
               write_bytes_remaining[decoder_idx] : output_fifo_occupied_len[decoder_idx];
-          dma_write_desc_addr <= task_dst_addr[dma_write_decoder];
+          dma_write_desc_addr <= task_dst_addr[decoder_idx];
 
           picked_decoder = 1;
         end
@@ -629,28 +640,6 @@ module jpeg_top #(
 
   assign dma_read_desc_fire  = dma_read_desc_valid && dma_read_desc_ready;
   assign dma_write_desc_fire = dma_write_desc_valid && dma_write_desc_ready;
-
-  // Route the selected decoder's output FIFO into the shared DMA write-data channel.
-  always_comb begin
-    active_out_fifo_tkeep_count = '0;
-    dma_write_data_tdata = '0;
-    dma_write_data_tkeep = '0;
-    dma_write_data_tvalid = 1'b0;
-    dma_write_data_tlast = 1'b0;
-    dma_write_data_tid = '0;
-
-    if (write_service_active) begin
-      active_out_fifo_tkeep_count = axis_keep_count(out_fifo_tkeep[write_service_decoder]);
-      dma_write_data_tdata = out_fifo_tdata[write_service_decoder];
-      dma_write_data_tkeep = out_fifo_tkeep[write_service_decoder];
-      dma_write_data_tvalid = out_fifo_tvalid[write_service_decoder] &&
-          !write_chunk_data_done[write_service_decoder];
-      dma_write_data_tlast = !write_chunk_data_done[write_service_decoder] &&
-          (write_chunk_bytes_sent[write_service_decoder] + active_out_fifo_tkeep_count ==
-           write_chunk_len[write_service_decoder]);
-      dma_write_data_tid = write_service_decoder;
-    end
-  end
 
   // Per-slot lifecycle bookkeeping plus shared read/write service ownership.
   always_ff @(posedge clk) begin
@@ -753,12 +742,12 @@ module jpeg_top #(
       end
 
       if (dma_write_desc_fire) begin
-        write_chunk_data_done[dma_write_decoder] <= 1'b0;
-        write_chunk_len[dma_write_decoder] <= dma_write_desc_len;
-        write_chunk_bytes_sent[dma_write_decoder] <= '0;
+        write_chunk_data_done[dma_write_desc_decoder] <= 1'b0;
+        write_chunk_len[dma_write_desc_decoder] <= dma_write_desc_len;
+        write_chunk_bytes_sent[dma_write_desc_decoder] <= '0;
         write_service_active <= 1'b1;
-        write_service_decoder <= dma_write_decoder;
-        write_rr_ptr <= dma_write_decoder + 1'b1;
+        write_service_decoder <= dma_write_desc_decoder;
+        write_rr_ptr <= dma_write_desc_decoder + 1'b1;
       end
 
       if (dma_write_data_fire) begin
@@ -825,7 +814,7 @@ module jpeg_top #(
       .m_axis_read_data_tuser(),
       .s_axis_write_desc_addr(dma_write_desc_addr),
       .s_axis_write_desc_len(dma_write_desc_len),
-      .s_axis_write_desc_tag(dma_write_decoder),
+      .s_axis_write_desc_tag(dma_write_desc_decoder),
       .s_axis_write_desc_valid(dma_write_desc_valid),
       .s_axis_write_desc_ready(dma_write_desc_ready),
       .m_axis_write_desc_status_len(dma_write_desc_status_len),
@@ -917,6 +906,41 @@ module jpeg_top #(
       .enable(read_service_active),
       .drop(1'b0),
       .select(read_service_decoder)
+  );
+
+  // Multiplex the decoder output FIFOs into the shared DMA write-data stream. Use a synthetic
+  // tlast at the end of each DMA chunk so the mux can switch decoders between chunks.
+  axis_mux #(
+      .S_COUNT(JPEG_NUM_DECODERS),
+      .DATA_WIDTH(AxisDataWidth),
+      .KEEP_ENABLE(1),
+      .KEEP_WIDTH(AxisKeepWidth),
+      .ID_ENABLE(1),
+      .ID_WIDTH(DecoderIdxWidth),
+      .DEST_ENABLE(0),
+      .USER_ENABLE(0),
+      .USER_WIDTH(1)
+  ) dma_write_mux_inst (
+      .clk(clk),
+      .rst(rst),
+      .s_axis_tdata(dma_write_mux_tdata),
+      .s_axis_tkeep(dma_write_mux_tkeep),
+      .s_axis_tvalid(dma_write_mux_tvalid),
+      .s_axis_tready(dma_write_mux_tready),
+      .s_axis_tlast(dma_write_mux_tlast),
+      .s_axis_tid(dma_write_mux_tid),
+      .s_axis_tdest(),
+      .s_axis_tuser(),
+      .m_axis_tdata(dma_write_data_tdata),
+      .m_axis_tkeep(dma_write_data_tkeep),
+      .m_axis_tvalid(dma_write_data_tvalid),
+      .m_axis_tready(dma_write_data_tready),
+      .m_axis_tlast(dma_write_data_tlast),
+      .m_axis_tid(dma_write_data_tid),
+      .m_axis_tdest(),
+      .m_axis_tuser(),
+      .enable(write_service_active),
+      .select(write_service_decoder)
   );
 
   genvar g;
@@ -1043,9 +1067,15 @@ module jpeg_top #(
           .status_good_frame()
       );
 
-      assign out_fifo_tready_dma[g] = write_service_active &&
-          (write_service_decoder == DecoderIdxWidth'(g)) && !write_chunk_data_done[g] &&
-          dma_write_data_tready;
+      assign dma_write_mux_tdata[g*AxisDataWidth+:AxisDataWidth] = out_fifo_tdata[g];
+      assign dma_write_mux_tkeep[g*AxisKeepWidth+:AxisKeepWidth] = out_fifo_tkeep[g];
+      assign dma_write_mux_tvalid[g] = out_fifo_tvalid[g] && !write_chunk_data_done[g];
+      assign dma_write_mux_tlast[g] = !write_chunk_data_done[g] &&
+          (write_chunk_bytes_sent[g] + axis_keep_count(
+          out_fifo_tkeep[g]
+      ) == write_chunk_len[g]);
+      assign dma_write_mux_tid[g*DecoderIdxWidth+:DecoderIdxWidth] = DecoderIdxWidth'(g);
+      assign out_fifo_tready_dma[g] = dma_write_mux_tready[g];
     end
   endgenerate
 
