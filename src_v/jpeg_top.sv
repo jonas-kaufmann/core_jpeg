@@ -512,21 +512,21 @@ module jpeg_top #(
   wire dma_read_data_tvalid;
   logic dma_read_data_tready;
   wire dma_read_data_tlast;
-  wire [AXI_DMA_ID_WIDTH-1:0] dma_read_data_tid;
+  wire [DecoderIdxWidth-1:0] dma_read_data_tid;
 
   logic [AxisDataWidth-1:0] dma_write_data_tdata;
   logic [AxisKeepWidth-1:0] dma_write_data_tkeep;
   logic dma_write_data_tvalid;
   wire dma_write_data_tready;
   logic dma_write_data_tlast;
-  logic [AXI_DMA_ID_WIDTH-1:0] dma_write_data_tid;
+  logic [DecoderIdxWidth-1:0] dma_write_data_tid;
 
   wire [DecoderIdxWidth-1:0] dma_read_desc_status_tag;
   wire [3:0] dma_read_desc_status_error;
   wire dma_read_desc_status_valid;
   wire [AxiDmaLenWidth-1:0] dma_write_desc_status_len;
   wire [DecoderIdxWidth-1:0] dma_write_desc_status_tag;
-  wire [AXI_DMA_ID_WIDTH-1:0] dma_write_desc_status_id;
+  wire [DecoderIdxWidth-1:0] dma_write_desc_status_id;
   wire [3:0] dma_write_desc_status_error;
   wire dma_write_desc_status_valid;
 
@@ -629,7 +629,7 @@ module jpeg_top #(
     integer i;
     dma_read_data_tready = 1'b0;
     if (dma_read_data_tvalid) begin
-      dma_read_data_tready = in_fifo_dma_tready[DecoderIdxWidth'(dma_read_data_tid)];
+      dma_read_data_tready = in_fifo_dma_tready[dma_read_data_tid];
     end
   end
 
@@ -651,7 +651,7 @@ module jpeg_top #(
       dma_write_data_tlast = !write_chunk_data_done[write_service_decoder] &&
           (write_chunk_bytes_sent[write_service_decoder] + active_out_fifo_tkeep_count ==
            write_chunk_len[write_service_decoder]);
-      dma_write_data_tid = decoder_axi_id(write_service_decoder);
+      dma_write_data_tid = write_service_decoder;
     end
   end
 
@@ -797,7 +797,7 @@ module jpeg_top #(
       .AXIS_KEEP_WIDTH(AXI_DMA_STRB_WIDTH),
       .AXIS_LAST_ENABLE(1),
       .AXIS_ID_ENABLE(1),
-      .AXIS_ID_WIDTH(AXI_DMA_ID_WIDTH),
+      .AXIS_ID_WIDTH(DecoderIdxWidth),
       .AXIS_DEST_ENABLE(0),
       .AXIS_USER_ENABLE(0),
       .LEN_WIDTH(AxiDmaLenWidth),
@@ -810,7 +810,7 @@ module jpeg_top #(
       .s_axis_read_desc_addr(dma_read_desc_addr),
       .s_axis_read_desc_len(dma_read_desc_len),
       .s_axis_read_desc_tag(dma_read_decoder),
-      .s_axis_read_desc_id(decoder_axi_id(dma_read_decoder)),
+      .s_axis_read_desc_id(dma_read_decoder),
       .s_axis_read_desc_dest(),
       .s_axis_read_desc_user(),
       .s_axis_read_desc_valid(dma_read_desc_valid),
