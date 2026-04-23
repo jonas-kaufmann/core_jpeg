@@ -626,7 +626,6 @@ module jpeg_top #(
 
   // Route the shared DMA read stream into the input FIFO that owns the active read transaction.
   always_comb begin
-    integer i;
     dma_read_data_tready = 1'b0;
     if (dma_read_data_tvalid) begin
       dma_read_data_tready = in_fifo_dma_tready[dma_read_data_tid];
