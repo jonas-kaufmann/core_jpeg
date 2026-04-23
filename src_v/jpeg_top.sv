@@ -44,7 +44,7 @@ module jpeg_top #(
     input  wire                             s_axil_rready,
 
     /*
-     * AXI read DMA interface
+     * AXI write DMA interface
      */
     output wire [  AXI_DMA_ID_WIDTH-1:0] m_axi_awid,
     output wire [AXI_DMA_ADDR_WIDTH-1:0] m_axi_awaddr,
@@ -67,7 +67,7 @@ module jpeg_top #(
     output wire                          m_axi_bready,
 
     /*
-     * AXI write DMA interface
+     * AXI read DMA interface
      */
     output wire [  AXI_DMA_ID_WIDTH-1:0] m_axi_arid,
     output wire [AXI_DMA_ADDR_WIDTH-1:0] m_axi_araddr,
@@ -96,7 +96,7 @@ module jpeg_top #(
   localparam int AxiDmaLenMax = InputFifoDepthBytes > OutputFifoDepthBytes ? InputFifoDepthBytes :
       OutputFifoDepthBytes;
   localparam int AxiDmaLenWidth = $clog2(AxiDmaLenMax + 1);
-  localparam int DecoderIdxWidth = JPEG_NUM_DECODERS > 1 ? $clog2(JPEG_NUM_DECODERS) : 1;
+  localparam int DecoderIdxWidth = $clog2(JPEG_NUM_DECODERS);
   localparam int DecoderIdxMask = JPEG_NUM_DECODERS - 1;
   localparam int InputFifoOccWidth = $clog2(InputFifoDepthBytes) + 1;
   localparam int OutputFifoOccWidth = $clog2(OutputFifoDepthBytes) + 1;
@@ -108,10 +108,12 @@ module jpeg_top #(
       initial
         $fatal(1, "Parameter AXI_DMA_STRB_WIDTH (%0d) must be a power of two", AXI_DMA_STRB_WIDTH);
     end
-    if ((JPEG_NUM_DECODERS & (JPEG_NUM_DECODERS - 1)) !=
-        0) begin : gen_verify_param_jpeg_num_decoders
+    if (JPEG_NUM_DECODERS <= 1 || (JPEG_NUM_DECODERS & (JPEG_NUM_DECODERS - 1)) != 0) begin
+        : gen_verify_param_jpeg_num_decoders
       initial
-        $fatal(1, "Parameter JPEG_NUM_DECODERS (%0d) must be a power of two", JPEG_NUM_DECODERS);
+        $fatal(
+            1, "Parameter JPEG_NUM_DECODERS (%0d) must be >1 and power of two", JPEG_NUM_DECODERS
+        );
     end
     if (AXI_DMA_ID_WIDTH < DecoderIdxWidth) begin : gen_verify_param_axi_dma_id_width
       initial
@@ -458,7 +460,6 @@ module jpeg_top #(
   logic [DecoderIdxWidth-1:0] desc_assign_decoder;
 
   logic [InputFifoOccWidth-1:0] input_fifo_occupied_len[JPEG_NUM_DECODERS];
-  logic [InputFifoOccWidth-1:0] input_fifo_free_bytes[JPEG_NUM_DECODERS];
   // Tracks bytes accepted into each output FIFO but not yet consumed by DMA. Even though axis_fifo
   // has the signal status_depth, this is not accurate since there is an internal buffering stage
   // before the output AXI-S interface. Data residing in this buffer is not accounted for via
@@ -490,28 +491,21 @@ module jpeg_top #(
   logic out_fifo_tlast[JPEG_NUM_DECODERS];
   logic out_fifo_tready_dma[JPEG_NUM_DECODERS];
 
-  logic can_issue_read_desc[JPEG_NUM_DECODERS];
-  logic can_issue_write_desc[JPEG_NUM_DECODERS];
-  logic [AxiDmaLenWidth-1:0] next_read_desc_len[JPEG_NUM_DECODERS];
-  logic [AxiDmaLenWidth-1:0] next_write_desc_len[JPEG_NUM_DECODERS];
-
-  logic read_issue_valid;
-  logic [DecoderIdxWidth-1:0] read_issue_decoder;
-  logic write_issue_valid;
-  logic [DecoderIdxWidth-1:0] write_issue_decoder;
-
-  wire read_desc_fire;
-  wire write_desc_fire;
-
-  wire [AXI_DMA_ADDR_WIDTH-1:0] dma_read_desc_addr = task_src_addr[read_issue_decoder];
-  wire [AxiDmaLenWidth-1:0] dma_read_desc_len = next_read_desc_len[read_issue_decoder];
-  wire dma_read_desc_valid = read_issue_valid;
+  logic [AXI_DMA_ADDR_WIDTH-1:0] dma_read_desc_addr;
+  logic [AxiDmaLenWidth-1:0] dma_read_desc_len;
+  logic dma_read_desc_valid;
   wire dma_read_desc_ready;
 
-  wire [AXI_DMA_ADDR_WIDTH-1:0] dma_write_desc_addr = task_dst_addr[write_issue_decoder];
-  wire [AxiDmaLenWidth-1:0] dma_write_desc_len = next_write_desc_len[write_issue_decoder];
-  wire dma_write_desc_valid = write_issue_valid;
+  logic [AXI_DMA_ADDR_WIDTH-1:0] dma_write_desc_addr;
+  logic [AxiDmaLenWidth-1:0] dma_write_desc_len;
+  logic dma_write_desc_valid;
   wire dma_write_desc_ready;
+
+  logic [DecoderIdxWidth-1:0] dma_read_decoder;
+  logic [DecoderIdxWidth-1:0] dma_write_decoder;
+
+  wire dma_read_desc_fire;
+  wire dma_write_desc_fire;
 
   wire [AxisDataWidth-1:0] dma_read_data_tdata;
   wire [AxisKeepWidth-1:0] dma_read_data_tkeep;
@@ -544,80 +538,91 @@ module jpeg_top #(
       write_bytes_remaining[dma_write_status_decoder] == write_chunk_len[dma_write_status_decoder]);
 
   // Pick the next decoder slot that is ready to accept a fresh descriptor.
-  always_comb begin
+  always_ff @(posedge clk) begin
+    bit picked_decoder = 0;
     integer i;
-    desc_assign_valid   = 1'b0;
-    desc_assign_decoder = '0;
+    desc_assign_valid   <= 1'b0;
+    desc_assign_decoder <= '0;
     for (i = 0; i < JPEG_NUM_DECODERS; i = i + 1) begin
-      if (!desc_assign_valid && slot_state[i] == SLOT_IDLE) begin
-        desc_assign_valid   = 1'b1;
-        desc_assign_decoder = DecoderIdxWidth'(i);
+      if (!picked_decoder && !desc_assign_valid && !desc_fifo_empty &&
+          slot_state[i] == SLOT_IDLE) begin
+        desc_assign_valid   <= 1'b1;
+        desc_assign_decoder <= DecoderIdxWidth'(i);
+        picked_decoder = 1;
       end
     end
   end
 
-  assign desc_fifo_pop = desc_assign_valid && !desc_fifo_empty;
+  assign desc_fifo_pop = desc_assign_valid;
 
-  // Read arbitration walks eligible decoders in round-robin order.
-  always_comb begin
+  // DMA read: arbitration and transfer sizing
+  always_ff @(posedge clk) begin
     integer i;
-    logic [DecoderIdxWidth-1:0] decoder_idx = read_rr_ptr;
-    read_issue_valid   = 1'b0;
-    read_issue_decoder = '0;
+    bit picked_decoder = 0;
+    logic [DecoderIdxWidth-1:0] decoder_idx = read_rr_ptr;  // walk decoders in round-robin order
+    dma_read_desc_valid <= 0;
+    dma_read_decoder <= 0;
+    dma_read_desc_len <= 0;
+
     for (i = 0; i < JPEG_NUM_DECODERS; i = i + 1) begin
-      if (!read_service_active && !read_issue_valid && can_issue_read_desc[decoder_idx]) begin
-        read_issue_valid   = 1'b1;
-        read_issue_decoder = decoder_idx;
+      logic [InputFifoOccWidth-1:0] input_fifo_free_bytes = 0;
+      bit can_issue_read = 0;
+      // Compute eligibility and transfer size. Read fill all available input FIFO space.
+      if (!picked_decoder && !read_service_active) begin
+        input_fifo_free_bytes = (InputFifoDepthBytes -
+                                 input_fifo_occupied_len[decoder_idx]) & ~(AXI_DMA_STRB_WIDTH - 1);
+        can_issue_read = (slot_state[decoder_idx] == SLOT_RUN) && task_src_len[decoder_idx] &&
+            input_fifo_free_bytes;
+
+        if (can_issue_read) begin
+          dma_read_desc_valid <= 1;
+          dma_read_decoder <= decoder_idx;
+          dma_read_desc_len <= task_src_len[decoder_idx] > input_fifo_free_bytes ?
+              input_fifo_free_bytes : task_src_len[decoder_idx];
+          dma_read_desc_addr <= task_src_addr[dma_read_decoder];
+
+          picked_decoder = 1;
+        end
       end
+
       decoder_idx = decoder_idx + 1'b1;
     end
   end
 
-  // Write arbitration walks eligible decoders in round-robin order.
-  always_comb begin
+  // DMA write: arbitration and transfer sizing
+  always_ff @(posedge clk) begin
     integer i;
-    logic [DecoderIdxWidth-1:0] decoder_idx = write_rr_ptr;
-    write_issue_valid   = 1'b0;
-    write_issue_decoder = '0;
+    bit picked_decoder = 0;
+    logic [DecoderIdxWidth-1:0] decoder_idx = write_rr_ptr;  // walk decoders in round-robin order
+    dma_write_desc_valid <= 0;
+    dma_write_decoder <= 0;
+    dma_write_desc_len <= 0;
+
     for (i = 0; i < JPEG_NUM_DECODERS; i = i + 1) begin
-      if (!write_service_active && !write_issue_valid && can_issue_write_desc[decoder_idx]) begin
-        write_issue_valid   = 1'b1;
-        write_issue_decoder = decoder_idx;
+      bit can_issue_write = 0;
+      // Compute eligibility and transfer size. write fill all available input FIFO space.
+      if (!picked_decoder && !write_service_active) begin
+        can_issue_write = (slot_state[decoder_idx] == SLOT_RUN) && have_dimensions[decoder_idx] &&
+            write_bytes_remaining[decoder_idx] && output_fifo_occupied_len[decoder_idx];
+
+        if (can_issue_write) begin
+          dma_write_desc_valid <= 1;
+          dma_write_decoder <= decoder_idx;
+          dma_write_desc_len <=
+              write_bytes_remaining[decoder_idx] < output_fifo_occupied_len[decoder_idx] ?
+              write_bytes_remaining[decoder_idx] : output_fifo_occupied_len[decoder_idx];
+          dma_write_desc_addr <= task_dst_addr[dma_write_decoder];
+
+          picked_decoder = 1;
+        end
       end
+
       decoder_idx = decoder_idx + 1'b1;
     end
   end
 
-  assign read_desc_fire  = dma_read_desc_valid && dma_read_desc_ready;
-  assign write_desc_fire = dma_write_desc_valid && dma_write_desc_ready;
-
-  // Per-decoder DMA eligibility and transfer sizing derived from local FIFO pressure. Reads fill
-  // all currently available input FIFO space and writes drain all data in output FIFO.
-  always_comb begin
-    integer i;
-    for (i = 0; i < JPEG_NUM_DECODERS; i = i + 1) begin
-      next_read_desc_len[i] = 0;
-      next_write_desc_len[i] = 0;
-
-      input_fifo_free_bytes[i] =
-          (InputFifoDepthBytes - input_fifo_occupied_len[i]) & ~(AXI_DMA_STRB_WIDTH - 1);
-      can_issue_read_desc[i] = (slot_state[i] == SLOT_RUN) && task_src_len[i] &&
-          input_fifo_free_bytes[i];
-      if (can_issue_read_desc[i]) begin
-        next_read_desc_len[i] = task_src_len[i] > input_fifo_free_bytes[i] ?
-            input_fifo_free_bytes[i] : task_src_len[i];
-      end
-
-      can_issue_write_desc[i] = (slot_state[i] == SLOT_RUN) && have_dimensions[i] &&
-          write_bytes_remaining[i] && output_fifo_occupied_len[i];
-      // Last transfer may not be full size but still occupies full size in FIFO. Hence, have to
-      // rely on write_bytes_remaining for that.
-      if (can_issue_write_desc[i]) begin
-        next_write_desc_len[i] = write_bytes_remaining[i] < output_fifo_occupied_len[i] ?
-            write_bytes_remaining[i] : output_fifo_occupied_len[i];
-      end
-    end
-  end
+  assign dma_read_desc_fire  = dma_read_desc_valid && dma_read_desc_ready;
+  assign dma_write_desc_fire = dma_write_desc_valid && dma_write_desc_ready;
 
   // Route the shared DMA read stream into the input FIFO that owns the active read transaction.
   always_comb begin
@@ -735,11 +740,11 @@ module jpeg_top #(
         img_height[desc_assign_decoder] <= 16'd0;
       end
 
-      if (read_desc_fire) begin
-        read_chunk_len[read_issue_decoder] <= next_read_desc_len[read_issue_decoder];
+      if (dma_read_desc_fire) begin
+        read_chunk_len[dma_read_decoder] <= dma_read_desc_len;
         read_service_active <= 1'b1;
-        read_service_decoder <= read_issue_decoder;
-        read_rr_ptr <= read_issue_decoder + 1'b1;
+        read_service_decoder <= dma_read_decoder;
+        read_rr_ptr <= dma_read_decoder + 1'b1;
       end
 
       if (dma_read_data_fire && dma_read_data_tlast) begin
@@ -750,13 +755,13 @@ module jpeg_top #(
         read_service_active <= 1'b0;
       end
 
-      if (write_desc_fire) begin
-        write_chunk_data_done[write_issue_decoder] <= 1'b0;
-        write_chunk_len[write_issue_decoder] <= next_write_desc_len[write_issue_decoder];
-        write_chunk_bytes_sent[write_issue_decoder] <= '0;
+      if (dma_write_desc_fire) begin
+        write_chunk_data_done[dma_write_decoder] <= 1'b0;
+        write_chunk_len[dma_write_decoder] <= dma_write_desc_len;
+        write_chunk_bytes_sent[dma_write_decoder] <= '0;
         write_service_active <= 1'b1;
-        write_service_decoder <= write_issue_decoder;
-        write_rr_ptr <= write_issue_decoder + 1'b1;
+        write_service_decoder <= dma_write_decoder;
+        write_rr_ptr <= dma_write_decoder + 1'b1;
       end
 
       if (dma_write_data_fire) begin
@@ -804,8 +809,8 @@ module jpeg_top #(
       .rst(rst),
       .s_axis_read_desc_addr(dma_read_desc_addr),
       .s_axis_read_desc_len(dma_read_desc_len),
-      .s_axis_read_desc_tag(read_issue_decoder),
-      .s_axis_read_desc_id(decoder_axi_id(read_issue_decoder)),
+      .s_axis_read_desc_tag(dma_read_decoder),
+      .s_axis_read_desc_id(decoder_axi_id(dma_read_decoder)),
       .s_axis_read_desc_dest(),
       .s_axis_read_desc_user(),
       .s_axis_read_desc_valid(dma_read_desc_valid),
@@ -823,7 +828,7 @@ module jpeg_top #(
       .m_axis_read_data_tuser(),
       .s_axis_write_desc_addr(dma_write_desc_addr),
       .s_axis_write_desc_len(dma_write_desc_len),
-      .s_axis_write_desc_tag(write_issue_decoder),
+      .s_axis_write_desc_tag(dma_write_decoder),
       .s_axis_write_desc_valid(dma_write_desc_valid),
       .s_axis_write_desc_ready(dma_write_desc_ready),
       .m_axis_write_desc_status_len(dma_write_desc_status_len),
