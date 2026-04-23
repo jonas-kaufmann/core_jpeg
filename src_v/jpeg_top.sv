@@ -471,7 +471,12 @@ module jpeg_top #(
   logic in_fifo_tvalid[JPEG_NUM_DECODERS];
   logic in_fifo_tready[JPEG_NUM_DECODERS];
   logic in_fifo_tlast[JPEG_NUM_DECODERS];
-  logic in_fifo_dma_tready[JPEG_NUM_DECODERS];
+
+  wire [JPEG_NUM_DECODERS*AxisDataWidth-1:0] dma_read_demux_tdata;
+  wire [JPEG_NUM_DECODERS*AxisKeepWidth-1:0] dma_read_demux_tkeep;
+  wire [JPEG_NUM_DECODERS-1:0] dma_read_demux_tvalid;
+  wire [JPEG_NUM_DECODERS-1:0] dma_read_demux_tready;
+  wire [JPEG_NUM_DECODERS-1:0] dma_read_demux_tlast;
 
   logic [15:0] core_out_width[JPEG_NUM_DECODERS];
   logic [15:0] core_out_height[JPEG_NUM_DECODERS];
@@ -563,6 +568,7 @@ module jpeg_top #(
     dma_read_desc_valid <= 0;
     dma_read_decoder <= 0;
     dma_read_desc_len <= 0;
+    dma_read_desc_addr <= 0;
 
     for (i = 0; i < JPEG_NUM_DECODERS; i = i + 1) begin
       logic [InputFifoOccWidth-1:0] input_fifo_free_bytes = 0;
@@ -579,7 +585,7 @@ module jpeg_top #(
           dma_read_decoder <= decoder_idx;
           dma_read_desc_len <= task_src_len[decoder_idx] > input_fifo_free_bytes ?
               input_fifo_free_bytes : task_src_len[decoder_idx];
-          dma_read_desc_addr <= task_src_addr[dma_read_decoder];
+          dma_read_desc_addr <= task_src_addr[decoder_idx];
 
           picked_decoder = 1;
         end
@@ -623,14 +629,6 @@ module jpeg_top #(
 
   assign dma_read_desc_fire  = dma_read_desc_valid && dma_read_desc_ready;
   assign dma_write_desc_fire = dma_write_desc_valid && dma_write_desc_ready;
-
-  // Route the shared DMA read stream into the input FIFO that owns the active read transaction.
-  always_comb begin
-    dma_read_data_tready = 1'b0;
-    if (dma_read_data_tvalid) begin
-      dma_read_data_tready = in_fifo_dma_tready[dma_read_data_tid];
-    end
-  end
 
   // Route the selected decoder's output FIFO into the shared DMA write-data channel.
   always_comb begin
@@ -885,6 +883,42 @@ module jpeg_top #(
       .write_abort(1'b0)
   );
 
+  // Demultiplex the shared DMA read stream into the selected decoder input FIFO.
+  axis_demux #(
+      .M_COUNT(JPEG_NUM_DECODERS),
+      .DATA_WIDTH(AxisDataWidth),
+      .KEEP_ENABLE(1),
+      .KEEP_WIDTH(AxisKeepWidth),
+      .ID_ENABLE(0),
+      .ID_WIDTH(DecoderIdxWidth),
+      .DEST_ENABLE(0),
+      .USER_ENABLE(0),
+      .USER_WIDTH(1),
+      .TDEST_ROUTE(0)
+  ) dma_read_demux_inst (
+      .clk(clk),
+      .rst(rst),
+      .s_axis_tdata(dma_read_data_tdata),
+      .s_axis_tkeep(dma_read_data_tkeep),
+      .s_axis_tvalid(dma_read_data_tvalid),
+      .s_axis_tready(dma_read_data_tready),
+      .s_axis_tlast(dma_read_data_tlast),
+      .s_axis_tid(dma_read_data_tid),
+      .s_axis_tdest(),
+      .s_axis_tuser(),
+      .m_axis_tdata(dma_read_demux_tdata),
+      .m_axis_tkeep(dma_read_demux_tkeep),
+      .m_axis_tvalid(dma_read_demux_tvalid),
+      .m_axis_tready(dma_read_demux_tready),
+      .m_axis_tlast(dma_read_demux_tlast),
+      .m_axis_tid(),
+      .m_axis_tdest(),
+      .m_axis_tuser(),
+      .enable(read_service_active),
+      .drop(1'b0),
+      .select(read_service_decoder)
+  );
+
   genvar g;
   generate
     for (g = 0; g < JPEG_NUM_DECODERS; g = g + 1) begin : gen_decoder
@@ -919,13 +953,11 @@ module jpeg_top #(
       ) input_fifo (
           .clk(decoder_clk),
           .rst(core_rst[g]),
-          .s_axis_tdata(dma_read_data_tdata),
-          .s_axis_tkeep(dma_read_data_tkeep),
-          .s_axis_tvalid(dma_read_data_tvalid && (dma_read_data_tid == decoder_axi_id(
-              DecoderIdxWidth'(g)
-          ))),
-          .s_axis_tready(in_fifo_dma_tready[g]),
-          .s_axis_tlast(dma_read_data_tlast),
+          .s_axis_tdata(dma_read_demux_tdata[g*AxisDataWidth+:AxisDataWidth]),
+          .s_axis_tkeep(dma_read_demux_tkeep[g*AxisKeepWidth+:AxisKeepWidth]),
+          .s_axis_tvalid(dma_read_demux_tvalid[g]),
+          .s_axis_tready(dma_read_demux_tready[g]),
+          .s_axis_tlast(dma_read_demux_tlast[g]),
           .s_axis_tid(),
           .s_axis_tdest(),
           .s_axis_tuser(),
