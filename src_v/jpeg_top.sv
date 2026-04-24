@@ -459,11 +459,12 @@ module jpeg_top #(
   logic desc_assign_valid;
   logic [DecoderIdxWidth-1:0] desc_assign_decoder;
 
+  // Tracks bytes accepted into each input and output FIFO but not yet consumed
+  // by the decoder core. Even though axis_fifo has the signal status_depth,
+  // this is not accurate since there is an internal buffering stage before the
+  // output AXI-S interface. Data residing in this buffer is not accounted for
+  // via status_depth.
   logic [InputFifoOccWidth-1:0] input_fifo_occupied_len[JPEG_NUM_DECODERS];
-  // Tracks bytes accepted into each output FIFO but not yet consumed by DMA. Even though axis_fifo
-  // has the signal status_depth, this is not accurate since there is an internal buffering stage
-  // before the output AXI-S interface. Data residing in this buffer is not accounted for via
-  // status_depth.
   logic [OutputFifoOccWidth-1:0] output_fifo_occupied_len[JPEG_NUM_DECODERS];
 
   logic [AxisDataWidth-1:0] in_fifo_tdata[JPEG_NUM_DECODERS];
@@ -652,6 +653,7 @@ AxisKeepWidth + 1
         write_chunk_data_done[i] <= 1'b0;
         have_dimensions[i] <= 1'b0;
         core_reset_pulse[i] <= 1'b0;
+        input_fifo_occupied_len[i] <= '0;
         output_fifo_occupied_len[i] <= '0;
         task_src_addr[i] <= 64'd0;
         task_src_len[i] <= 64'd0;
@@ -666,18 +668,33 @@ AxisKeepWidth + 1
       end
     end else begin
       for (i = 0; i < JPEG_NUM_DECODERS; i = i + 1) begin
-        bit pushed;
-        bit popped;
-        logic [OutputFifoOccWidth-1:0] bytes_pushed;
-        logic [OutputFifoOccWidth-1:0] bytes_popped;
+        bit input_pushed;
+        bit input_popped;
+        logic [InputFifoOccWidth-1:0] input_bytes_pushed;
+        logic [InputFifoOccWidth-1:0] input_bytes_popped;
+        bit output_pushed;
+        bit output_popped;
+        logic [OutputFifoOccWidth-1:0] output_bytes_pushed;
+        logic [OutputFifoOccWidth-1:0] output_bytes_popped;
 
         core_reset_pulse[i] <= 1'b0;
 
-        pushed = core_out_tvalid[i] && out_fifo_tready[i];
-        popped = out_fifo_tvalid[i] && out_fifo_tready_dma[i];
-        bytes_pushed = axis_keep_count(core_out_tkeep[i]) & {OutputFifoOccWidth{pushed}};
-        bytes_popped = axis_keep_count(out_fifo_tkeep[i]) & {OutputFifoOccWidth{popped}};
-        output_fifo_occupied_len[i] <= output_fifo_occupied_len[i] + bytes_pushed - bytes_popped;
+        input_pushed = dma_read_demux_tvalid[i] && dma_read_demux_tready[i];
+        input_popped = in_fifo_tvalid[i] && in_fifo_tready[i];
+        input_bytes_pushed = axis_keep_count(dma_read_demux_tkeep[i*AxisKeepWidth+:AxisKeepWidth]) &
+            {InputFifoOccWidth{input_pushed}};
+        input_bytes_popped = axis_keep_count(in_fifo_tkeep[i]) & {InputFifoOccWidth{input_popped}};
+        input_fifo_occupied_len[i] <= input_fifo_occupied_len[i] + input_bytes_pushed -
+            input_bytes_popped;
+
+        output_pushed = core_out_tvalid[i] && out_fifo_tready[i];
+        output_popped = out_fifo_tvalid[i] && out_fifo_tready_dma[i];
+        output_bytes_pushed = axis_keep_count(core_out_tkeep[i]) &
+            {OutputFifoOccWidth{output_pushed}};
+        output_bytes_popped = axis_keep_count(out_fifo_tkeep[i]) &
+            {OutputFifoOccWidth{output_popped}};
+        output_fifo_occupied_len[i] <= output_fifo_occupied_len[i] + output_bytes_pushed -
+            output_bytes_popped;
 
         unique case (slot_state[i])
           SLOT_RESET_PULSE: begin
@@ -708,6 +725,7 @@ AxisKeepWidth + 1
         slot_state[desc_assign_decoder] <= SLOT_RUN;
         write_chunk_data_done[desc_assign_decoder] <= 1'b0;
         have_dimensions[desc_assign_decoder] <= 1'b0;
+        input_fifo_occupied_len[desc_assign_decoder] <= '0;
         output_fifo_occupied_len[desc_assign_decoder] <= '0;
         task_src_addr[desc_assign_decoder] <= desc_fifo_src_addr[desc_fifo_rd_ptr];
         task_src_len[desc_assign_decoder] <= desc_fifo_src_len[desc_fifo_rd_ptr];
@@ -990,7 +1008,7 @@ AxisKeepWidth + 1
           .m_axis_tuser(),
           .pause_req(1'b0),
           .pause_ack(),
-          .status_depth(input_fifo_occupied_len[g]),
+          .status_depth(),
           .status_depth_commit(),
           .status_overflow(),
           .status_bad_frame(),
