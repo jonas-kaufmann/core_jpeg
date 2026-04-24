@@ -532,13 +532,8 @@ module jpeg_top #(
   logic dma_write_data_tlast;
   logic [DecoderIdxWidth-1:0] dma_write_data_tid;
 
-  wire [DecoderIdxWidth-1:0] dma_read_desc_status_tag;
-  wire [3:0] dma_read_desc_status_error;
-  wire dma_read_desc_status_valid;
   wire [AxiDmaLenWidth-1:0] dma_write_desc_status_len;
   wire [DecoderIdxWidth-1:0] dma_write_desc_status_tag;
-  wire [DecoderIdxWidth-1:0] dma_write_desc_status_id;
-  wire [3:0] dma_write_desc_status_error;
   wire dma_write_desc_status_valid;
 
   wire [$clog2(
@@ -801,9 +796,9 @@ AxisKeepWidth + 1
       .s_axis_read_desc_user(),
       .s_axis_read_desc_valid(dma_read_desc_valid),
       .s_axis_read_desc_ready(dma_read_desc_ready),
-      .m_axis_read_desc_status_tag(dma_read_desc_status_tag),
-      .m_axis_read_desc_status_error(dma_read_desc_status_error),
-      .m_axis_read_desc_status_valid(dma_read_desc_status_valid),
+      .m_axis_read_desc_status_tag(),
+      .m_axis_read_desc_status_error(),
+      .m_axis_read_desc_status_valid(),
       .m_axis_read_data_tdata(dma_read_data_tdata),
       .m_axis_read_data_tkeep(dma_read_data_tkeep),
       .m_axis_read_data_tvalid(dma_read_data_tvalid),
@@ -819,10 +814,10 @@ AxisKeepWidth + 1
       .s_axis_write_desc_ready(dma_write_desc_ready),
       .m_axis_write_desc_status_len(dma_write_desc_status_len),
       .m_axis_write_desc_status_tag(dma_write_desc_status_tag),
-      .m_axis_write_desc_status_id(dma_write_desc_status_id),
+      .m_axis_write_desc_status_id(),
       .m_axis_write_desc_status_dest(),
       .m_axis_write_desc_status_user(),
-      .m_axis_write_desc_status_error(dma_write_desc_status_error),
+      .m_axis_write_desc_status_error(),
       .m_axis_write_desc_status_valid(dma_write_desc_status_valid),
       .s_axis_write_data_tdata(dma_write_data_tdata),
       .s_axis_write_data_tkeep(dma_write_data_tkeep),
