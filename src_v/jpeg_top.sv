@@ -473,11 +473,11 @@ module jpeg_top #(
   logic core_in_tready[JPEG_NUM_DECODERS];
   logic core_in_tlast[JPEG_NUM_DECODERS];
 
-  wire [JPEG_NUM_DECODERS*AxisDataWidth-1:0] dma_read_demux_tdata;
-  wire [JPEG_NUM_DECODERS*AxisKeepWidth-1:0] dma_read_demux_tkeep;
-  wire [JPEG_NUM_DECODERS-1:0] dma_read_demux_tvalid;
-  wire [JPEG_NUM_DECODERS-1:0] dma_read_demux_tready;
-  wire [JPEG_NUM_DECODERS-1:0] dma_read_demux_tlast;
+  logic [AxisDataWidth-1:0] input_fifo_tdata[JPEG_NUM_DECODERS];
+  logic [AxisKeepWidth-1:0] input_fifo_tkeep[JPEG_NUM_DECODERS];
+  logic input_fifo_tvalid[JPEG_NUM_DECODERS];
+  logic input_fifo_tready[JPEG_NUM_DECODERS];
+  logic input_fifo_tlast[JPEG_NUM_DECODERS];
 
   logic [15:0] core_out_width[JPEG_NUM_DECODERS];
   logic [15:0] core_out_height[JPEG_NUM_DECODERS];
@@ -494,13 +494,7 @@ module jpeg_top #(
   logic [AxisKeepWidth-1:0] output_fifo_tkeep[JPEG_NUM_DECODERS];
   logic output_fifo_tvalid[JPEG_NUM_DECODERS];
   logic output_fifo_tlast[JPEG_NUM_DECODERS];
-  logic output_fifo_tready_dma[JPEG_NUM_DECODERS];
-  wire [JPEG_NUM_DECODERS*AxisDataWidth-1:0] dma_write_mux_tdata;
-  wire [JPEG_NUM_DECODERS*AxisKeepWidth-1:0] dma_write_mux_tkeep;
-  wire [JPEG_NUM_DECODERS-1:0] dma_write_mux_tvalid;
-  wire [JPEG_NUM_DECODERS-1:0] dma_write_mux_tready;
-  wire [JPEG_NUM_DECODERS-1:0] dma_write_mux_tlast;
-  wire [JPEG_NUM_DECODERS*DecoderIdxWidth-1:0] dma_write_mux_tid;
+  logic output_fifo_tready[JPEG_NUM_DECODERS];
 
   logic [AXI_DMA_ADDR_WIDTH-1:0] dma_read_desc_addr;
   logic [AxiDmaLenWidth-1:0] dma_read_desc_len;
@@ -675,16 +669,16 @@ AxisKeepWidth + 1
 
         core_reset_pulse[i] <= 1'b0;
 
-        input_pushed = dma_read_demux_tvalid[i] && dma_read_demux_tready[i];
+        input_pushed = input_fifo_tvalid[i] && input_fifo_tready[i];
         input_popped = core_in_tvalid[i] && core_in_tready[i];
-        input_bytes_pushed = axis_keep_count(dma_read_demux_tkeep[i*AxisKeepWidth+:AxisKeepWidth]) &
+        input_bytes_pushed = axis_keep_count(input_fifo_tkeep[i]) &
             {InputFifoOccWidth{input_pushed}};
         input_bytes_popped = axis_keep_count(core_in_tkeep[i]) & {InputFifoOccWidth{input_popped}};
         input_fifo_occupied_len[i] <= input_fifo_occupied_len[i] + input_bytes_pushed -
             input_bytes_popped;
 
         output_pushed = core_out_tvalid[i] && core_out_tready[i];
-        output_popped = output_fifo_tvalid[i] && output_fifo_tready_dma[i];
+        output_popped = output_fifo_tvalid[i] && output_fifo_tready[i];
         output_bytes_pushed = axis_keep_count(core_out_tkeep[i]) &
             {OutputFifoOccWidth{output_pushed}};
         output_bytes_popped = axis_keep_count(output_fifo_tkeep[i]) &
@@ -881,76 +875,51 @@ AxisKeepWidth + 1
       .write_abort(1'b0)
   );
 
-  // Demultiplex the shared DMA read stream into the selected decoder input FIFO.
-  axis_demux #(
-      .M_COUNT(JPEG_NUM_DECODERS),
-      .DATA_WIDTH(AxisDataWidth),
-      .KEEP_ENABLE(1),
-      .KEEP_WIDTH(AxisKeepWidth),
-      .ID_ENABLE(0),
-      .ID_WIDTH(DecoderIdxWidth),
-      .DEST_ENABLE(0),
-      .USER_ENABLE(0),
-      .USER_WIDTH(1),
-      .TDEST_ROUTE(0)
-  ) dma_read_demux_inst (
-      .clk(clk),
-      .rst(rst),
-      .s_axis_tdata(dma_read_data_tdata),
-      .s_axis_tkeep(dma_read_data_tkeep),
-      .s_axis_tvalid(dma_read_data_tvalid),
-      .s_axis_tready(dma_read_data_tready),
-      .s_axis_tlast(dma_read_data_tlast),
-      .s_axis_tid(dma_read_data_tid),
-      .s_axis_tdest(),
-      .s_axis_tuser(),
-      .m_axis_tdata(dma_read_demux_tdata),
-      .m_axis_tkeep(dma_read_demux_tkeep),
-      .m_axis_tvalid(dma_read_demux_tvalid),
-      .m_axis_tready(dma_read_demux_tready),
-      .m_axis_tlast(dma_read_demux_tlast),
-      .m_axis_tid(),
-      .m_axis_tdest(),
-      .m_axis_tuser(),
-      .enable(read_service_active),
-      .drop(1'b0),
-      .select(read_service_decoder)
-  );
+  // DMA read data routing from DMA engine to input FIFO
+  always_comb begin
+    integer i;
+    dma_read_data_tready = 1'b0;
+    for (i = 0; i < JPEG_NUM_DECODERS; i = i + 1) begin
+      input_fifo_tdata[i]  = '0;
+      input_fifo_tkeep[i]  = '0;
+      input_fifo_tvalid[i] = 1'b0;
+      input_fifo_tlast[i]  = 1'b0;
+    end
 
-  // Multiplex the decoder output FIFOs into the shared DMA write-data stream. Use a synthetic
-  // tlast at the end of each DMA chunk so the mux can switch decoders between chunks.
-  axis_mux #(
-      .S_COUNT(JPEG_NUM_DECODERS),
-      .DATA_WIDTH(AxisDataWidth),
-      .KEEP_ENABLE(1),
-      .KEEP_WIDTH(AxisKeepWidth),
-      .ID_ENABLE(1),
-      .ID_WIDTH(DecoderIdxWidth),
-      .DEST_ENABLE(0),
-      .USER_ENABLE(0),
-      .USER_WIDTH(1)
-  ) dma_write_mux_inst (
-      .clk(clk),
-      .rst(rst),
-      .s_axis_tdata(dma_write_mux_tdata),
-      .s_axis_tkeep(dma_write_mux_tkeep),
-      .s_axis_tvalid(dma_write_mux_tvalid),
-      .s_axis_tready(dma_write_mux_tready),
-      .s_axis_tlast(dma_write_mux_tlast),
-      .s_axis_tid(dma_write_mux_tid),
-      .s_axis_tdest(),
-      .s_axis_tuser(),
-      .m_axis_tdata(dma_write_data_tdata),
-      .m_axis_tkeep(dma_write_data_tkeep),
-      .m_axis_tvalid(dma_write_data_tvalid),
-      .m_axis_tready(dma_write_data_tready),
-      .m_axis_tlast(dma_write_data_tlast),
-      .m_axis_tid(dma_write_data_tid),
-      .m_axis_tdest(),
-      .m_axis_tuser(),
-      .enable(write_service_active),
-      .select(write_service_decoder)
-  );
+    if (read_service_active) begin
+      input_fifo_tdata[read_service_decoder] = dma_read_data_tdata;
+      input_fifo_tkeep[read_service_decoder] = dma_read_data_tkeep;
+      input_fifo_tvalid[read_service_decoder] = dma_read_data_tvalid;
+      input_fifo_tlast[read_service_decoder] = dma_read_data_tlast;
+      dma_read_data_tready = input_fifo_tready[read_service_decoder];
+    end
+  end
+
+  // DMA write data routing from output FIFO to DMA engine
+  always_comb begin
+    integer i;
+    dma_write_data_tdata = '0;
+    dma_write_data_tkeep = '0;
+    dma_write_data_tvalid = 1'b0;
+    dma_write_data_tlast = 1'b0;
+    dma_write_data_tid = '0;
+    for (i = 0; i < JPEG_NUM_DECODERS; i = i + 1) begin
+      output_fifo_tready[i] = 1'b0;
+    end
+
+    if (write_service_active) begin
+      dma_write_data_tdata = output_fifo_tdata[write_service_decoder];
+      dma_write_data_tkeep = output_fifo_tkeep[write_service_decoder];
+      dma_write_data_tvalid = output_fifo_tvalid[write_service_decoder] &&
+          !write_chunk_data_done[write_service_decoder];
+      dma_write_data_tlast = !write_chunk_data_done[write_service_decoder] &&
+          (write_chunk_bytes_sent[write_service_decoder] + output_fifo_tkeep_count ==
+           write_chunk_len[write_service_decoder]);
+      dma_write_data_tid = write_service_decoder;
+      output_fifo_tready[write_service_decoder] = dma_write_data_tready &&
+          !write_chunk_data_done[write_service_decoder];
+    end
+  end
 
   genvar g;
   generate
@@ -986,11 +955,11 @@ AxisKeepWidth + 1
       ) input_fifo (
           .clk(decoder_clk),
           .rst(core_rst[g]),
-          .s_axis_tdata(dma_read_demux_tdata[g*AxisDataWidth+:AxisDataWidth]),
-          .s_axis_tkeep(dma_read_demux_tkeep[g*AxisKeepWidth+:AxisKeepWidth]),
-          .s_axis_tvalid(dma_read_demux_tvalid[g]),
-          .s_axis_tready(dma_read_demux_tready[g]),
-          .s_axis_tlast(dma_read_demux_tlast[g]),
+          .s_axis_tdata(input_fifo_tdata[g]),
+          .s_axis_tkeep(input_fifo_tkeep[g]),
+          .s_axis_tvalid(input_fifo_tvalid[g]),
+          .s_axis_tready(input_fifo_tready[g]),
+          .s_axis_tlast(input_fifo_tlast[g]),
           .s_axis_tid(),
           .s_axis_tdest(),
           .s_axis_tuser(),
@@ -1060,7 +1029,7 @@ AxisKeepWidth + 1
           .m_axis_tdata(output_fifo_tdata[g]),
           .m_axis_tkeep(output_fifo_tkeep[g]),
           .m_axis_tvalid(output_fifo_tvalid[g]),
-          .m_axis_tready(output_fifo_tready_dma[g]),
+          .m_axis_tready(output_fifo_tready[g]),
           .m_axis_tlast(output_fifo_tlast[g]),
           .m_axis_tid(),
           .m_axis_tdest(),
@@ -1073,16 +1042,6 @@ AxisKeepWidth + 1
           .status_bad_frame(),
           .status_good_frame()
       );
-
-      assign dma_write_mux_tdata[g*AxisDataWidth+:AxisDataWidth] = output_fifo_tdata[g];
-      assign dma_write_mux_tkeep[g*AxisKeepWidth+:AxisKeepWidth] = output_fifo_tkeep[g];
-      assign dma_write_mux_tvalid[g] = output_fifo_tvalid[g] && !write_chunk_data_done[g];
-      assign dma_write_mux_tlast[g] = !write_chunk_data_done[g] &&
-          (write_chunk_bytes_sent[g] + axis_keep_count(
-          output_fifo_tkeep[g]
-      ) == write_chunk_len[g]);
-      assign dma_write_mux_tid[g*DecoderIdxWidth+:DecoderIdxWidth] = DecoderIdxWidth'(g);
-      assign output_fifo_tready_dma[g] = dma_write_mux_tready[g];
     end
   endgenerate
 
