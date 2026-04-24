@@ -467,11 +467,11 @@ module jpeg_top #(
   logic [InputFifoOccWidth-1:0] input_fifo_occupied_len[JPEG_NUM_DECODERS];
   logic [OutputFifoOccWidth-1:0] output_fifo_occupied_len[JPEG_NUM_DECODERS];
 
-  logic [AxisDataWidth-1:0] in_fifo_tdata[JPEG_NUM_DECODERS];
-  logic [AxisKeepWidth-1:0] in_fifo_tkeep[JPEG_NUM_DECODERS];
-  logic in_fifo_tvalid[JPEG_NUM_DECODERS];
-  logic in_fifo_tready[JPEG_NUM_DECODERS];
-  logic in_fifo_tlast[JPEG_NUM_DECODERS];
+  logic [AxisDataWidth-1:0] core_in_tdata[JPEG_NUM_DECODERS];
+  logic [AxisKeepWidth-1:0] core_in_tkeep[JPEG_NUM_DECODERS];
+  logic core_in_tvalid[JPEG_NUM_DECODERS];
+  logic core_in_tready[JPEG_NUM_DECODERS];
+  logic core_in_tlast[JPEG_NUM_DECODERS];
 
   wire [JPEG_NUM_DECODERS*AxisDataWidth-1:0] dma_read_demux_tdata;
   wire [JPEG_NUM_DECODERS*AxisKeepWidth-1:0] dma_read_demux_tkeep;
@@ -490,12 +490,11 @@ module jpeg_top #(
   logic core_out_tlast[JPEG_NUM_DECODERS];
   logic core_dims_valid[JPEG_NUM_DECODERS];
 
-  logic [AxisDataWidth-1:0] out_fifo_tdata[JPEG_NUM_DECODERS];
-  logic [AxisKeepWidth-1:0] out_fifo_tkeep[JPEG_NUM_DECODERS];
-  logic out_fifo_tvalid[JPEG_NUM_DECODERS];
-  logic out_fifo_tready[JPEG_NUM_DECODERS];
-  logic out_fifo_tlast[JPEG_NUM_DECODERS];
-  logic out_fifo_tready_dma[JPEG_NUM_DECODERS];
+  logic [AxisDataWidth-1:0] output_fifo_tdata[JPEG_NUM_DECODERS];
+  logic [AxisKeepWidth-1:0] output_fifo_tkeep[JPEG_NUM_DECODERS];
+  logic output_fifo_tvalid[JPEG_NUM_DECODERS];
+  logic output_fifo_tlast[JPEG_NUM_DECODERS];
+  logic output_fifo_tready_dma[JPEG_NUM_DECODERS];
   wire [JPEG_NUM_DECODERS*AxisDataWidth-1:0] dma_write_mux_tdata;
   wire [JPEG_NUM_DECODERS*AxisKeepWidth-1:0] dma_write_mux_tkeep;
   wire [JPEG_NUM_DECODERS-1:0] dma_write_mux_tvalid;
@@ -539,7 +538,7 @@ module jpeg_top #(
 
   wire [$clog2(
 AxisKeepWidth + 1
-)-1:0] active_out_fifo_tkeep_count = axis_keep_count(
+)-1:0] output_fifo_tkeep_count = axis_keep_count(
       dma_write_data_tkeep
   );
   wire dma_read_data_fire = dma_read_data_tvalid && dma_read_data_tready;
@@ -680,18 +679,18 @@ AxisKeepWidth + 1
         core_reset_pulse[i] <= 1'b0;
 
         input_pushed = dma_read_demux_tvalid[i] && dma_read_demux_tready[i];
-        input_popped = in_fifo_tvalid[i] && in_fifo_tready[i];
+        input_popped = core_in_tvalid[i] && core_in_tready[i];
         input_bytes_pushed = axis_keep_count(dma_read_demux_tkeep[i*AxisKeepWidth+:AxisKeepWidth]) &
             {InputFifoOccWidth{input_pushed}};
-        input_bytes_popped = axis_keep_count(in_fifo_tkeep[i]) & {InputFifoOccWidth{input_popped}};
+        input_bytes_popped = axis_keep_count(core_in_tkeep[i]) & {InputFifoOccWidth{input_popped}};
         input_fifo_occupied_len[i] <= input_fifo_occupied_len[i] + input_bytes_pushed -
             input_bytes_popped;
 
-        output_pushed = core_out_tvalid[i] && out_fifo_tready[i];
-        output_popped = out_fifo_tvalid[i] && out_fifo_tready_dma[i];
+        output_pushed = core_out_tvalid[i] && core_out_tready[i];
+        output_popped = output_fifo_tvalid[i] && output_fifo_tready_dma[i];
         output_bytes_pushed = axis_keep_count(core_out_tkeep[i]) &
             {OutputFifoOccWidth{output_pushed}};
-        output_bytes_popped = axis_keep_count(out_fifo_tkeep[i]) &
+        output_bytes_popped = axis_keep_count(output_fifo_tkeep[i]) &
             {OutputFifoOccWidth{output_popped}};
         output_fifo_occupied_len[i] <= output_fifo_occupied_len[i] + output_bytes_pushed -
             output_bytes_popped;
@@ -765,7 +764,7 @@ AxisKeepWidth + 1
 
       if (dma_write_data_fire) begin
         write_chunk_bytes_sent[write_service_decoder] <=
-            write_chunk_bytes_sent[write_service_decoder] + active_out_fifo_tkeep_count;
+            write_chunk_bytes_sent[write_service_decoder] + output_fifo_tkeep_count;
         if (dma_write_data_tlast) begin
           write_chunk_data_done[write_service_decoder] <= 1'b1;
         end
@@ -998,11 +997,11 @@ AxisKeepWidth + 1
           .s_axis_tid(),
           .s_axis_tdest(),
           .s_axis_tuser(),
-          .m_axis_tdata(in_fifo_tdata[g]),
-          .m_axis_tkeep(in_fifo_tkeep[g]),
-          .m_axis_tvalid(in_fifo_tvalid[g]),
-          .m_axis_tready(in_fifo_tready[g]),
-          .m_axis_tlast(in_fifo_tlast[g]),
+          .m_axis_tdata(core_in_tdata[g]),
+          .m_axis_tkeep(core_in_tkeep[g]),
+          .m_axis_tvalid(core_in_tvalid[g]),
+          .m_axis_tready(core_in_tready[g]),
+          .m_axis_tlast(core_in_tlast[g]),
           .m_axis_tid(),
           .m_axis_tdest(),
           .m_axis_tuser(),
@@ -1022,11 +1021,11 @@ AxisKeepWidth + 1
       ) jpeg_core_inst (
           .clk(decoder_clk),
           .rst(core_rst[g]),
-          .s_axis_tdata(in_fifo_tdata[g]),
-          .s_axis_tkeep(in_fifo_tkeep[g]),
-          .s_axis_tvalid(in_fifo_tvalid[g]),
-          .s_axis_tready(in_fifo_tready[g]),
-          .s_axis_tlast(in_fifo_tlast[g]),
+          .s_axis_tdata(core_in_tdata[g]),
+          .s_axis_tkeep(core_in_tkeep[g]),
+          .s_axis_tvalid(core_in_tvalid[g]),
+          .s_axis_tready(core_in_tready[g]),
+          .s_axis_tlast(core_in_tlast[g]),
           .m_axis_tdata(core_out_tdata[g]),
           .m_axis_tkeep(core_out_tkeep[g]),
           .m_axis_tvalid(core_out_tvalid[g]),
@@ -1037,8 +1036,6 @@ AxisKeepWidth + 1
           .out_height(core_out_height[g]),
           .idle()
       );
-
-      assign core_out_tready[g] = out_fifo_tready[g];
 
       axis_fifo #(
           .DEPTH(OutputFifoDepthBytes),
@@ -1058,16 +1055,16 @@ AxisKeepWidth + 1
           .s_axis_tdata(core_out_tdata[g]),
           .s_axis_tkeep(core_out_tkeep[g]),
           .s_axis_tvalid(core_out_tvalid[g]),
-          .s_axis_tready(out_fifo_tready[g]),
+          .s_axis_tready(core_out_tready[g]),
           .s_axis_tlast(core_out_tlast[g]),
           .s_axis_tid(),
           .s_axis_tdest(),
           .s_axis_tuser(1'b0),
-          .m_axis_tdata(out_fifo_tdata[g]),
-          .m_axis_tkeep(out_fifo_tkeep[g]),
-          .m_axis_tvalid(out_fifo_tvalid[g]),
-          .m_axis_tready(out_fifo_tready_dma[g]),
-          .m_axis_tlast(out_fifo_tlast[g]),
+          .m_axis_tdata(output_fifo_tdata[g]),
+          .m_axis_tkeep(output_fifo_tkeep[g]),
+          .m_axis_tvalid(output_fifo_tvalid[g]),
+          .m_axis_tready(output_fifo_tready_dma[g]),
+          .m_axis_tlast(output_fifo_tlast[g]),
           .m_axis_tid(),
           .m_axis_tdest(),
           .m_axis_tuser(),
@@ -1080,15 +1077,15 @@ AxisKeepWidth + 1
           .status_good_frame()
       );
 
-      assign dma_write_mux_tdata[g*AxisDataWidth+:AxisDataWidth] = out_fifo_tdata[g];
-      assign dma_write_mux_tkeep[g*AxisKeepWidth+:AxisKeepWidth] = out_fifo_tkeep[g];
-      assign dma_write_mux_tvalid[g] = out_fifo_tvalid[g] && !write_chunk_data_done[g];
+      assign dma_write_mux_tdata[g*AxisDataWidth+:AxisDataWidth] = output_fifo_tdata[g];
+      assign dma_write_mux_tkeep[g*AxisKeepWidth+:AxisKeepWidth] = output_fifo_tkeep[g];
+      assign dma_write_mux_tvalid[g] = output_fifo_tvalid[g] && !write_chunk_data_done[g];
       assign dma_write_mux_tlast[g] = !write_chunk_data_done[g] &&
           (write_chunk_bytes_sent[g] + axis_keep_count(
-          out_fifo_tkeep[g]
+          output_fifo_tkeep[g]
       ) == write_chunk_len[g]);
       assign dma_write_mux_tid[g*DecoderIdxWidth+:DecoderIdxWidth] = DecoderIdxWidth'(g);
-      assign out_fifo_tready_dma[g] = dma_write_mux_tready[g];
+      assign output_fifo_tready_dma[g] = dma_write_mux_tready[g];
     end
   endgenerate
 
