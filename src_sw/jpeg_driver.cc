@@ -576,6 +576,11 @@ bool HardwareDecoderManagerThreadMain(volatile jpeg_regs *jpeg_dev,
       jpeg_dev->desc_commit = 1;
       mmio_write_barrier();
 
+      std::ostringstream oss;
+      oss << "decode submitted: task_id=" << task->image_index
+          << " path=" << task->image_path;
+      LogLine(oss.str());
+
       scheduler->CompleteHardwareSubmit(task->image_index);
     }
 
