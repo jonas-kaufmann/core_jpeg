@@ -532,8 +532,6 @@ module jpeg_top #(
   logic dma_write_data_tlast;
   logic [DecoderIdxWidth-1:0] dma_write_data_tid;
 
-  wire [AxiDmaLenWidth-1:0] dma_write_desc_status_len;
-  wire [DecoderIdxWidth-1:0] dma_write_desc_status_tag;
   wire dma_write_desc_status_valid;
 
   wire [$clog2(
@@ -543,9 +541,8 @@ AxisKeepWidth + 1
   );
   wire dma_read_data_fire = dma_read_data_tvalid && dma_read_data_tready;
   wire dma_write_data_fire = dma_write_data_tvalid && dma_write_data_tready;
-  wire [DecoderIdxWidth-1:0] dma_write_status_decoder = dma_write_desc_status_tag;
-  wire write_status_is_final = dma_write_desc_status_valid && (
-      write_bytes_remaining[dma_write_status_decoder] == write_chunk_len[dma_write_status_decoder]);
+  wire write_status_is_final = dma_write_desc_status_valid &&
+      (write_bytes_remaining[write_service_decoder] == write_chunk_len[write_service_decoder]);
 
   // Pick the next decoder slot that is ready to accept a fresh descriptor.
   always_ff @(posedge clk) begin
@@ -771,13 +768,13 @@ AxisKeepWidth + 1
       end
 
       if (dma_write_desc_status_valid) begin
-        task_dst_addr[dma_write_status_decoder] <= task_dst_addr[dma_write_status_decoder] +
-            write_chunk_len[dma_write_status_decoder];
-        write_bytes_remaining[dma_write_status_decoder] <= write_bytes_remaining[
-            dma_write_status_decoder] - write_chunk_len[dma_write_status_decoder];
-        write_chunk_data_done[dma_write_status_decoder] <= 1'b0;
-        write_chunk_len[dma_write_status_decoder] <= 64'd0;
-        write_chunk_bytes_sent[dma_write_status_decoder] <= '0;
+        task_dst_addr[write_service_decoder] <= task_dst_addr[write_service_decoder] +
+            write_chunk_len[write_service_decoder];
+        write_bytes_remaining[write_service_decoder] <=
+            write_bytes_remaining[write_service_decoder] - write_chunk_len[write_service_decoder];
+        write_chunk_data_done[write_service_decoder] <= 1'b0;
+        write_chunk_len[write_service_decoder] <= 64'd0;
+        write_chunk_bytes_sent[write_service_decoder] <= '0;
         write_service_active <= 1'b0;
       end
     end
@@ -829,8 +826,8 @@ AxisKeepWidth + 1
       .s_axis_write_desc_tag(dma_write_desc_decoder),
       .s_axis_write_desc_valid(dma_write_desc_valid),
       .s_axis_write_desc_ready(dma_write_desc_ready),
-      .m_axis_write_desc_status_len(dma_write_desc_status_len),
-      .m_axis_write_desc_status_tag(dma_write_desc_status_tag),
+      .m_axis_write_desc_status_len(),
+      .m_axis_write_desc_status_tag(),
       .m_axis_write_desc_status_id(),
       .m_axis_write_desc_status_dest(),
       .m_axis_write_desc_status_user(),
@@ -1097,9 +1094,9 @@ AxisKeepWidth + 1
     cpl_fifo_push_data = 64'd0;
     if (write_status_is_final) begin
       cpl_fifo_push_data[15:0]  = 16'd1;
-      cpl_fifo_push_data[31:16] = task_id[dma_write_status_decoder];
-      cpl_fifo_push_data[47:32] = img_width[dma_write_status_decoder];
-      cpl_fifo_push_data[63:48] = img_height[dma_write_status_decoder];
+      cpl_fifo_push_data[31:16] = task_id[write_service_decoder];
+      cpl_fifo_push_data[47:32] = img_width[write_service_decoder];
+      cpl_fifo_push_data[63:48] = img_height[write_service_decoder];
     end
   end
 
