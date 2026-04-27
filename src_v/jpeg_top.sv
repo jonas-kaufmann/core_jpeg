@@ -374,6 +374,7 @@ module jpeg_top #(
 
   // MMIO FIFO updates
   always_ff @(posedge clk) begin
+    integer i;
     if (rst || mmio_reset_pulse) begin
       desc_fifo_wr_ptr <= '0;
       desc_fifo_rd_ptr <= '0;
@@ -381,6 +382,13 @@ module jpeg_top #(
       cpl_fifo_wr_ptr  <= '0;
       cpl_fifo_rd_ptr  <= '0;
       cpl_fifo_count   <= '0;
+      for (i = 0; i < DescFifoDepth; i = i + 1) begin
+        desc_fifo_src_addr[i] <= 64'd0;
+        desc_fifo_src_len[i]  <= 64'd0;
+        desc_fifo_dst_addr[i] <= 64'd0;
+        desc_fifo_id[i]       <= 16'd0;
+        cpl_fifo_data[i]      <= 64'd0;
+      end
     end else begin
       if (desc_fifo_push && !desc_fifo_full) begin
         desc_fifo_src_addr[desc_fifo_wr_ptr] <= mmio_desc_src_addr_reg;
@@ -795,7 +803,7 @@ AxisKeepWidth + 1
       .ENABLE_UNALIGNED(0)
   ) dma_inst (
       .clk(clk),
-      .rst(rst),
+      .rst(rst || mmio_reset_pulse),
       .s_axis_read_desc_addr(dma_read_desc_addr),
       .s_axis_read_desc_len(dma_read_desc_len),
       .s_axis_read_desc_tag(dma_read_decoder),
