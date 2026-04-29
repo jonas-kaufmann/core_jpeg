@@ -442,17 +442,15 @@ module jpeg_top #(
 
   decoder_slot_state_t slot_state[JPEG_NUM_DECODERS];
 
-  logic write_chunk_data_done[JPEG_NUM_DECODERS];
+  logic write_chunk_data_done;
   logic have_dimensions[JPEG_NUM_DECODERS];
   logic core_reset_pulse[JPEG_NUM_DECODERS];
 
   logic [AXI_DMA_ADDR_WIDTH-1:0] task_src_addr[JPEG_NUM_DECODERS];
   logic [31:0] task_src_len[JPEG_NUM_DECODERS];
   logic [AXI_DMA_ADDR_WIDTH-1:0] task_dst_addr[JPEG_NUM_DECODERS];
-  logic [AxiDmaLenWidth-1:0] read_chunk_len[JPEG_NUM_DECODERS];
   logic [31:0] write_bytes_remaining[JPEG_NUM_DECODERS];
-  logic [AxiDmaLenWidth-1:0] write_chunk_len[JPEG_NUM_DECODERS];
-  logic [AxiDmaLenWidth-1:0] write_chunk_bytes_sent[JPEG_NUM_DECODERS];
+  logic [AxiDmaLenWidth-1:0] write_chunk_bytes_sent;
   logic [15:0] task_id[JPEG_NUM_DECODERS];
   logic [15:0] img_width[JPEG_NUM_DECODERS];
   logic [15:0] img_height[JPEG_NUM_DECODERS];
@@ -544,7 +542,7 @@ AxisKeepWidth + 1
   wire dma_read_data_fire = dma_read_data_tvalid && dma_read_data_tready;
   wire dma_write_data_fire = dma_write_data_tvalid && dma_write_data_tready;
   wire write_status_is_final = dma_write_desc_status_valid &&
-      (write_bytes_remaining[write_service_decoder] == write_chunk_len[write_service_decoder]);
+      (write_bytes_remaining[write_service_decoder] == dma_write_desc_len);
 
   // Pick the next decoder slot that is ready to accept a fresh descriptor.
   always_ff @(posedge clk) begin
@@ -566,69 +564,77 @@ AxisKeepWidth + 1
 
   // DMA read: arbitration and transfer sizing
   always_ff @(posedge clk) begin
-    integer i;
-    bit picked_decoder = 0;
-    logic [DecoderIdxWidth-1:0] decoder_idx = read_rr_ptr;  // walk decoders in round-robin order
-    dma_read_desc_valid <= 0;
-    dma_read_decoder <= 0;
-    dma_read_desc_len <= 0;
-    dma_read_desc_addr <= 0;
+    if (rst || mmio_reset_pulse) begin
+      dma_read_desc_valid <= 0;
+      dma_read_decoder <= 0;
+      dma_read_desc_len <= 0;
+      dma_read_desc_addr <= 0;
+    end else begin
+      integer i;
+      bit picked_decoder = 0;
+      logic [DecoderIdxWidth-1:0] decoder_idx = read_rr_ptr;  // walk decoders in round-robin order
+      dma_read_desc_valid <= 0;
 
-    for (i = 0; i < JPEG_NUM_DECODERS; i = i + 1) begin
-      logic [InputFifoOccWidth-1:0] input_fifo_free_bytes = 0;
-      bit can_issue_read = 0;
-      // Compute eligibility and transfer size. Read fill all available input FIFO space.
-      if (!picked_decoder && !read_service_active) begin
-        input_fifo_free_bytes = (InputFifoDepthBytes -
-                                 input_fifo_occupied_len[decoder_idx]) & ~(AXI_DMA_STRB_WIDTH - 1);
-        can_issue_read = (slot_state[decoder_idx] == SLOT_RUN) && task_src_len[decoder_idx] &&
-            input_fifo_free_bytes;
+      for (i = 0; i < JPEG_NUM_DECODERS; i = i + 1) begin
+        logic [InputFifoOccWidth-1:0] input_fifo_free_bytes = 0;
+        bit can_issue_read = 0;
+        // Compute eligibility and transfer size. Read fill all available input FIFO space.
+        if (!picked_decoder && !read_service_active) begin
+          input_fifo_free_bytes = (InputFifoDepthBytes - input_fifo_occupied_len[decoder_idx]) & ~(
+              AXI_DMA_STRB_WIDTH - 1);
+          can_issue_read = (slot_state[decoder_idx] == SLOT_RUN) && task_src_len[decoder_idx] &&
+              input_fifo_free_bytes;
 
-        if (can_issue_read) begin
-          dma_read_desc_valid <= 1;
-          dma_read_decoder <= decoder_idx;
-          dma_read_desc_len <= task_src_len[decoder_idx] > input_fifo_free_bytes ?
-              input_fifo_free_bytes : task_src_len[decoder_idx];
-          dma_read_desc_addr <= task_src_addr[decoder_idx];
+          if (can_issue_read) begin
+            dma_read_desc_valid <= 1;
+            dma_read_decoder <= decoder_idx;
+            dma_read_desc_len <= task_src_len[decoder_idx] > input_fifo_free_bytes ?
+                input_fifo_free_bytes : task_src_len[decoder_idx];
+            dma_read_desc_addr <= task_src_addr[decoder_idx];
 
-          picked_decoder = 1;
+            picked_decoder = 1;
+          end
         end
-      end
 
-      decoder_idx = decoder_idx + 1'b1;
+        decoder_idx = decoder_idx + 1'b1;
+      end
     end
   end
 
   // DMA write: arbitration and transfer sizing
   always_ff @(posedge clk) begin
-    integer i;
-    bit picked_decoder = 0;
-    logic [DecoderIdxWidth-1:0] decoder_idx = write_rr_ptr;  // walk decoders in round-robin order
-    dma_write_desc_valid <= 0;
-    dma_write_desc_decoder <= 0;
-    dma_write_desc_len <= 0;
-    dma_write_desc_addr <= 0;
+    if (rst || mmio_reset_pulse) begin
+      dma_write_desc_valid <= 0;
+      dma_write_desc_decoder <= 0;
+      dma_write_desc_len <= 0;
+      dma_write_desc_addr <= 0;
+    end else begin
+      integer i;
+      bit picked_decoder = 0;
+      logic [DecoderIdxWidth-1:0] decoder_idx = write_rr_ptr;  // walk decoders in round-robin order
+      dma_write_desc_valid <= 0;
 
-    for (i = 0; i < JPEG_NUM_DECODERS; i = i + 1) begin
-      bit can_issue_write = 0;
-      // Compute eligibility and transfer size. write fill all available input FIFO space.
-      if (!picked_decoder && !write_service_active) begin
-        can_issue_write = (slot_state[decoder_idx] == SLOT_RUN) && have_dimensions[decoder_idx] &&
-            write_bytes_remaining[decoder_idx] && output_fifo_occupied_len[decoder_idx];
+      for (i = 0; i < JPEG_NUM_DECODERS; i = i + 1) begin
+        bit can_issue_write = 0;
+        // Compute eligibility and transfer size. write fill all available input FIFO space.
+        if (!picked_decoder && !write_service_active) begin
+          can_issue_write = (slot_state[decoder_idx] == SLOT_RUN) && have_dimensions[decoder_idx] &&
+              write_bytes_remaining[decoder_idx] && output_fifo_occupied_len[decoder_idx];
 
-        if (can_issue_write) begin
-          dma_write_desc_valid <= 1;
-          dma_write_desc_decoder <= decoder_idx;
-          dma_write_desc_len <=
-              write_bytes_remaining[decoder_idx] < output_fifo_occupied_len[decoder_idx] ?
-              write_bytes_remaining[decoder_idx] : output_fifo_occupied_len[decoder_idx];
-          dma_write_desc_addr <= task_dst_addr[decoder_idx];
+          if (can_issue_write) begin
+            dma_write_desc_valid <= 1;
+            dma_write_desc_decoder <= decoder_idx;
+            dma_write_desc_len <=
+                write_bytes_remaining[decoder_idx] < output_fifo_occupied_len[decoder_idx] ?
+                write_bytes_remaining[decoder_idx] : output_fifo_occupied_len[decoder_idx];
+            dma_write_desc_addr <= task_dst_addr[decoder_idx];
 
-          picked_decoder = 1;
+            picked_decoder = 1;
+          end
         end
-      end
 
-      decoder_idx = decoder_idx + 1'b1;
+        decoder_idx = decoder_idx + 1'b1;
+      end
     end
   end
 
@@ -639,16 +645,18 @@ AxisKeepWidth + 1
   always_ff @(posedge clk) begin
     integer i;
     if (rst || mmio_reset_pulse) begin
-      read_service_active   <= 1'b0;
-      read_service_decoder  <= '0;
-      read_rr_ptr           <= '0;
-      write_service_active  <= 1'b0;
-      write_service_decoder <= '0;
-      write_rr_ptr          <= '0;
+      read_service_active    <= 1'b0;
+      read_service_decoder   <= '0;
+      read_rr_ptr            <= '0;
+      write_service_active   <= 1'b0;
+      write_service_decoder  <= '0;
+      write_rr_ptr           <= '0;
+
+      write_chunk_data_done  <= 1'b0;
+      write_chunk_bytes_sent <= '0;
 
       for (i = 0; i < JPEG_NUM_DECODERS; i = i + 1) begin
         slot_state[i] <= SLOT_IDLE;
-        write_chunk_data_done[i] <= 1'b0;
         have_dimensions[i] <= 1'b0;
         core_reset_pulse[i] <= 1'b0;
         input_fifo_occupied_len[i] <= '0;
@@ -656,10 +664,7 @@ AxisKeepWidth + 1
         task_src_addr[i] <= 64'd0;
         task_src_len[i] <= 64'd0;
         task_dst_addr[i] <= 64'd0;
-        read_chunk_len[i] <= 64'd0;
         write_bytes_remaining[i] <= 64'd0;
-        write_chunk_len[i] <= 64'd0;
-        write_chunk_bytes_sent[i] <= '0;
         task_id[i] <= 16'd0;
         img_width[i] <= 16'd0;
         img_height[i] <= 16'd0;
@@ -721,24 +726,19 @@ AxisKeepWidth + 1
 
       if (desc_fifo_pop) begin
         slot_state[desc_assign_decoder] <= SLOT_RUN;
-        write_chunk_data_done[desc_assign_decoder] <= 1'b0;
         have_dimensions[desc_assign_decoder] <= 1'b0;
         input_fifo_occupied_len[desc_assign_decoder] <= '0;
         output_fifo_occupied_len[desc_assign_decoder] <= '0;
         task_src_addr[desc_assign_decoder] <= desc_fifo_src_addr[desc_fifo_rd_ptr];
         task_src_len[desc_assign_decoder] <= desc_fifo_src_len[desc_fifo_rd_ptr];
         task_dst_addr[desc_assign_decoder] <= desc_fifo_dst_addr[desc_fifo_rd_ptr];
-        read_chunk_len[desc_assign_decoder] <= 64'd0;
         write_bytes_remaining[desc_assign_decoder] <= 64'd0;
-        write_chunk_len[desc_assign_decoder] <= 64'd0;
-        write_chunk_bytes_sent[desc_assign_decoder] <= '0;
         task_id[desc_assign_decoder] <= desc_fifo_id[desc_fifo_rd_ptr];
         img_width[desc_assign_decoder] <= 16'd0;
         img_height[desc_assign_decoder] <= 16'd0;
       end
 
       if (dma_read_desc_fire) begin
-        read_chunk_len[dma_read_decoder] <= dma_read_desc_len;
         read_service_active <= 1'b1;
         read_service_decoder <= dma_read_decoder;
         read_rr_ptr <= dma_read_decoder + 1'b1;
@@ -746,37 +746,32 @@ AxisKeepWidth + 1
 
       if (dma_read_data_fire && dma_read_data_tlast) begin
         task_src_addr[read_service_decoder] <= task_src_addr[read_service_decoder] +
-            read_chunk_len[read_service_decoder];
+            dma_read_desc_len;
         task_src_len[read_service_decoder] <= task_src_len[read_service_decoder] -
-            read_chunk_len[read_service_decoder];
+            dma_read_desc_len;
         read_service_active <= 1'b0;
       end
 
       if (dma_write_desc_fire) begin
-        write_chunk_data_done[dma_write_desc_decoder] <= 1'b0;
-        write_chunk_len[dma_write_desc_decoder] <= dma_write_desc_len;
-        write_chunk_bytes_sent[dma_write_desc_decoder] <= '0;
         write_service_active <= 1'b1;
         write_service_decoder <= dma_write_desc_decoder;
         write_rr_ptr <= dma_write_desc_decoder + 1'b1;
       end
 
       if (dma_write_data_fire) begin
-        write_chunk_bytes_sent[write_service_decoder] <=
-            write_chunk_bytes_sent[write_service_decoder] + output_fifo_tkeep_count;
+        write_chunk_bytes_sent <= write_chunk_bytes_sent + output_fifo_tkeep_count;
         if (dma_write_data_tlast) begin
-          write_chunk_data_done[write_service_decoder] <= 1'b1;
+          write_chunk_data_done <= 1'b1;
         end
       end
 
       if (dma_write_desc_status_valid) begin
         task_dst_addr[write_service_decoder] <= task_dst_addr[write_service_decoder] +
-            write_chunk_len[write_service_decoder];
+            dma_write_desc_len;
         write_bytes_remaining[write_service_decoder] <=
-            write_bytes_remaining[write_service_decoder] - write_chunk_len[write_service_decoder];
-        write_chunk_data_done[write_service_decoder] <= 1'b0;
-        write_chunk_len[write_service_decoder] <= 64'd0;
-        write_chunk_bytes_sent[write_service_decoder] <= '0;
+            write_bytes_remaining[write_service_decoder] - dma_write_desc_len;
+        write_chunk_data_done <= 1'b0;
+        write_chunk_bytes_sent <= '0;
         write_service_active <= 1'b0;
       end
     end
@@ -918,14 +913,11 @@ AxisKeepWidth + 1
     if (write_service_active) begin
       dma_write_data_tdata = output_fifo_tdata[write_service_decoder];
       dma_write_data_tkeep = output_fifo_tkeep[write_service_decoder];
-      dma_write_data_tvalid = output_fifo_tvalid[write_service_decoder] &&
-          !write_chunk_data_done[write_service_decoder];
-      dma_write_data_tlast = !write_chunk_data_done[write_service_decoder] &&
-          (write_chunk_bytes_sent[write_service_decoder] + output_fifo_tkeep_count ==
-           write_chunk_len[write_service_decoder]);
+      dma_write_data_tvalid = output_fifo_tvalid[write_service_decoder] && !write_chunk_data_done;
+      dma_write_data_tlast = !write_chunk_data_done &&
+          (write_chunk_bytes_sent + output_fifo_tkeep_count == dma_write_desc_len);
       dma_write_data_tid = write_service_decoder;
-      output_fifo_tready[write_service_decoder] = dma_write_data_tready &&
-          !write_chunk_data_done[write_service_decoder];
+      output_fifo_tready[write_service_decoder] = dma_write_data_tready && !write_chunk_data_done;
     end
   end
 
