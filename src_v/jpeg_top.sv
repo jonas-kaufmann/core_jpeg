@@ -1,6 +1,7 @@
 `timescale 1ns / 1ps
 `include "jpeg_params.vh"
 `default_nettype none
+`define JPEG_MARK_DEBUG (* mark_debug = "true" *)
 
 module jpeg_top #(
     parameter unsigned JPEG_SUPPORT_WRITABLE_DHT = `JPEG_SUPPORT_WRITABLE_DHT,
@@ -193,9 +194,11 @@ module jpeg_top #(
 
   logic [DESC_FIFO_DEPTH_LOG2-1:0] desc_fifo_wr_ptr;
   logic [DESC_FIFO_DEPTH_LOG2-1:0] desc_fifo_rd_ptr;
+  `JPEG_MARK_DEBUG
   logic [DESC_FIFO_DEPTH_LOG2:0] desc_fifo_count;
 
   wire desc_fifo_full = (desc_fifo_count == DescFifoDepth);
+  `JPEG_MARK_DEBUG
   wire desc_fifo_empty = (desc_fifo_count == '0);
 
   logic desc_fifo_push;
@@ -440,8 +443,10 @@ module jpeg_top #(
     SLOT_RESET_HOLD
   } decoder_slot_state_t;
 
+  `JPEG_MARK_DEBUG
   decoder_slot_state_t slot_state[JPEG_NUM_DECODERS];
 
+  `JPEG_MARK_DEBUG
   logic write_chunk_data_done;
   logic have_dimensions[JPEG_NUM_DECODERS];
   logic core_reset_pulse[JPEG_NUM_DECODERS];
@@ -449,20 +454,30 @@ module jpeg_top #(
   logic [AXI_DMA_ADDR_WIDTH-1:0] task_src_addr[JPEG_NUM_DECODERS];
   logic [31:0] task_src_len[JPEG_NUM_DECODERS];
   logic [AXI_DMA_ADDR_WIDTH-1:0] task_dst_addr[JPEG_NUM_DECODERS];
+  `JPEG_MARK_DEBUG
   logic [31:0] write_bytes_remaining[JPEG_NUM_DECODERS];
+  `JPEG_MARK_DEBUG
   logic [AxiDmaLenWidth-1:0] write_chunk_bytes_sent;
   logic [15:0] task_id[JPEG_NUM_DECODERS];
   logic [15:0] img_width[JPEG_NUM_DECODERS];
   logic [15:0] img_height[JPEG_NUM_DECODERS];
 
+  `JPEG_MARK_DEBUG
   logic read_service_active;
+  `JPEG_MARK_DEBUG
   logic [DecoderIdxWidth-1:0] read_service_decoder;
+  `JPEG_MARK_DEBUG
   logic [DecoderIdxWidth-1:0] read_rr_ptr;
+  `JPEG_MARK_DEBUG
   logic write_service_active;
+  `JPEG_MARK_DEBUG
   logic [DecoderIdxWidth-1:0] write_service_decoder;
+  `JPEG_MARK_DEBUG
   logic [DecoderIdxWidth-1:0] write_rr_ptr;
 
+  `JPEG_MARK_DEBUG
   logic desc_assign_valid;
+  `JPEG_MARK_DEBUG
   logic [DecoderIdxWidth-1:0] desc_assign_decoder;
 
   // Tracks bytes accepted into each input and output FIFO but not yet consumed
@@ -470,7 +485,9 @@ module jpeg_top #(
   // this is not accurate since there is an internal buffering stage before the
   // output AXI-S interface. Data residing in this buffer is not accounted for
   // via status_depth.
+  `JPEG_MARK_DEBUG
   logic [InputFifoOccWidth-1:0] input_fifo_occupied_len[JPEG_NUM_DECODERS];
+  `JPEG_MARK_DEBUG
   logic [OutputFifoOccWidth-1:0] output_fifo_occupied_len[JPEG_NUM_DECODERS];
 
   logic [AxisDataWidth-1:0] core_in_tdata[JPEG_NUM_DECODERS];
@@ -481,8 +498,11 @@ module jpeg_top #(
 
   logic [AxisDataWidth-1:0] input_fifo_tdata[JPEG_NUM_DECODERS];
   logic [AxisKeepWidth-1:0] input_fifo_tkeep[JPEG_NUM_DECODERS];
+  `JPEG_MARK_DEBUG
   logic input_fifo_tvalid[JPEG_NUM_DECODERS];
+  `JPEG_MARK_DEBUG
   logic input_fifo_tready[JPEG_NUM_DECODERS];
+  `JPEG_MARK_DEBUG
   logic input_fifo_tlast[JPEG_NUM_DECODERS];
 
   logic [15:0] core_out_width[JPEG_NUM_DECODERS];
@@ -498,42 +518,65 @@ module jpeg_top #(
 
   logic [AxisDataWidth-1:0] output_fifo_tdata[JPEG_NUM_DECODERS];
   logic [AxisKeepWidth-1:0] output_fifo_tkeep[JPEG_NUM_DECODERS];
+  `JPEG_MARK_DEBUG
   logic output_fifo_tvalid[JPEG_NUM_DECODERS];
+  `JPEG_MARK_DEBUG
   logic output_fifo_tlast[JPEG_NUM_DECODERS];
+  `JPEG_MARK_DEBUG
   logic output_fifo_tready[JPEG_NUM_DECODERS];
 
   logic [AXI_DMA_ADDR_WIDTH-1:0] dma_read_desc_addr;
+  `JPEG_MARK_DEBUG
   logic [AxiDmaLenWidth-1:0] dma_read_desc_len;
+  `JPEG_MARK_DEBUG
   logic dma_read_desc_valid;
+  `JPEG_MARK_DEBUG
   wire dma_read_desc_ready;
 
   logic [AXI_DMA_ADDR_WIDTH-1:0] dma_write_desc_addr;
+  `JPEG_MARK_DEBUG
   logic [AxiDmaLenWidth-1:0] dma_write_desc_len;
+  `JPEG_MARK_DEBUG
   logic dma_write_desc_valid;
+  `JPEG_MARK_DEBUG
   wire dma_write_desc_ready;
 
+  `JPEG_MARK_DEBUG
   logic [DecoderIdxWidth-1:0] dma_read_decoder;
+  `JPEG_MARK_DEBUG
   logic [DecoderIdxWidth-1:0] dma_write_desc_decoder;
 
+  `JPEG_MARK_DEBUG
   wire dma_read_desc_fire;
+  `JPEG_MARK_DEBUG
   wire dma_write_desc_fire;
 
   wire [AxisDataWidth-1:0] dma_read_data_tdata;
   wire [AxisKeepWidth-1:0] dma_read_data_tkeep;
+  `JPEG_MARK_DEBUG
   wire dma_read_data_tvalid;
+  `JPEG_MARK_DEBUG
   logic dma_read_data_tready;
+  `JPEG_MARK_DEBUG
   wire dma_read_data_tlast;
-  wire [DecoderIdxWidth-1:0] dma_read_data_tid;
+  `JPEG_MARK_DEBUG
+  wire  [DecoderIdxWidth-1:0] dma_read_data_tid;
 
-  logic [AxisDataWidth-1:0] dma_write_data_tdata;
-  logic [AxisKeepWidth-1:0] dma_write_data_tkeep;
+  logic [  AxisDataWidth-1:0] dma_write_data_tdata;
+  logic [  AxisKeepWidth-1:0] dma_write_data_tkeep;
+  `JPEG_MARK_DEBUG
   logic dma_write_data_tvalid;
+  `JPEG_MARK_DEBUG
   wire dma_write_data_tready;
+  `JPEG_MARK_DEBUG
   logic dma_write_data_tlast;
+  `JPEG_MARK_DEBUG
   logic [DecoderIdxWidth-1:0] dma_write_data_tid;
 
+  `JPEG_MARK_DEBUG
   wire dma_write_desc_status_valid;
 
+  `JPEG_MARK_DEBUG
   wire [$clog2(
 AxisKeepWidth + 1
 )-1:0] output_fifo_tkeep_count = axis_keep_count(
@@ -541,6 +584,7 @@ AxisKeepWidth + 1
   );
   wire dma_read_data_fire = dma_read_data_tvalid && dma_read_data_tready;
   wire dma_write_data_fire = dma_write_data_tvalid && dma_write_data_tready;
+  `JPEG_MARK_DEBUG
   wire write_status_is_final = dma_write_desc_status_valid &&
       (write_bytes_remaining[write_service_decoder] == dma_write_desc_len);
 
