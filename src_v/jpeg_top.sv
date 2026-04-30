@@ -551,6 +551,13 @@ module jpeg_top #(
   `JPEG_MARK_DEBUG
   wire dma_write_desc_fire;
 
+  wire [AxisDataWidth-1:0] dma_read_data_reg_tdata;
+  wire [AxisKeepWidth-1:0] dma_read_data_reg_tkeep;
+  wire dma_read_data_reg_tvalid;
+  wire dma_read_data_reg_tready;
+  wire dma_read_data_reg_tlast;
+  wire [DecoderIdxWidth-1:0] dma_read_data_reg_tid;
+
   wire [AxisDataWidth-1:0] dma_read_data_tdata;
   wire [AxisKeepWidth-1:0] dma_read_data_tkeep;
   `JPEG_MARK_DEBUG
@@ -572,6 +579,13 @@ module jpeg_top #(
   logic dma_write_data_tlast;
   `JPEG_MARK_DEBUG
   logic [DecoderIdxWidth-1:0] dma_write_data_tid;
+
+  wire [AxisDataWidth-1:0] dma_write_data_reg_tdata;
+  wire [AxisKeepWidth-1:0] dma_write_data_reg_tkeep;
+  wire dma_write_data_reg_tvalid;
+  wire dma_write_data_reg_tready;
+  wire dma_write_data_reg_tlast;
+  wire [DecoderIdxWidth-1:0] dma_write_data_reg_tid;
 
   `JPEG_MARK_DEBUG
   wire dma_write_desc_status_valid;
@@ -854,12 +868,12 @@ AxisKeepWidth + 1
       .m_axis_read_desc_status_tag(),
       .m_axis_read_desc_status_error(),
       .m_axis_read_desc_status_valid(),
-      .m_axis_read_data_tdata(dma_read_data_tdata),
-      .m_axis_read_data_tkeep(dma_read_data_tkeep),
-      .m_axis_read_data_tvalid(dma_read_data_tvalid),
-      .m_axis_read_data_tready(dma_read_data_tready),
-      .m_axis_read_data_tlast(dma_read_data_tlast),
-      .m_axis_read_data_tid(dma_read_data_tid),
+      .m_axis_read_data_tdata(dma_read_data_reg_tdata),
+      .m_axis_read_data_tkeep(dma_read_data_reg_tkeep),
+      .m_axis_read_data_tvalid(dma_read_data_reg_tvalid),
+      .m_axis_read_data_tready(dma_read_data_reg_tready),
+      .m_axis_read_data_tlast(dma_read_data_reg_tlast),
+      .m_axis_read_data_tid(dma_read_data_reg_tid),
       .m_axis_read_data_tdest(),
       .m_axis_read_data_tuser(),
       .s_axis_write_desc_addr(dma_write_desc_addr),
@@ -874,12 +888,12 @@ AxisKeepWidth + 1
       .m_axis_write_desc_status_user(),
       .m_axis_write_desc_status_error(),
       .m_axis_write_desc_status_valid(dma_write_desc_status_valid),
-      .s_axis_write_data_tdata(dma_write_data_tdata),
-      .s_axis_write_data_tkeep(dma_write_data_tkeep),
-      .s_axis_write_data_tvalid(dma_write_data_tvalid),
-      .s_axis_write_data_tready(dma_write_data_tready),
-      .s_axis_write_data_tlast(dma_write_data_tlast),
-      .s_axis_write_data_tid(dma_write_data_tid),
+      .s_axis_write_data_tdata(dma_write_data_reg_tdata),
+      .s_axis_write_data_tkeep(dma_write_data_reg_tkeep),
+      .s_axis_write_data_tvalid(dma_write_data_reg_tvalid),
+      .s_axis_write_data_tready(dma_write_data_reg_tready),
+      .s_axis_write_data_tlast(dma_write_data_reg_tlast),
+      .s_axis_write_data_tid(dma_write_data_reg_tid),
       .s_axis_write_data_tdest(),
       .s_axis_write_data_tuser(),
       .m_axi_awid(m_axi_awid),
@@ -920,6 +934,70 @@ AxisKeepWidth + 1
       .read_enable(1'b1),
       .write_enable(1'b1),
       .write_abort(1'b0)
+  );
+
+  axis_register #(
+      .DATA_WIDTH(AxisDataWidth),
+      .KEEP_ENABLE(1),
+      .KEEP_WIDTH(AxisKeepWidth),
+      .LAST_ENABLE(1),
+      .ID_ENABLE(1),
+      .ID_WIDTH(DecoderIdxWidth),
+      .DEST_ENABLE(0),
+      .USER_ENABLE(0),
+      .USER_WIDTH(1),
+      .REG_TYPE(2)
+  ) dma_read_data_reg (
+      .clk(clk),
+      .rst(rst || mmio_reset_pulse),
+      .s_axis_tdata(dma_read_data_reg_tdata),
+      .s_axis_tkeep(dma_read_data_reg_tkeep),
+      .s_axis_tvalid(dma_read_data_reg_tvalid),
+      .s_axis_tready(dma_read_data_reg_tready),
+      .s_axis_tlast(dma_read_data_reg_tlast),
+      .s_axis_tid(dma_read_data_reg_tid),
+      .s_axis_tdest(),
+      .s_axis_tuser(1'b0),
+      .m_axis_tdata(dma_read_data_tdata),
+      .m_axis_tkeep(dma_read_data_tkeep),
+      .m_axis_tvalid(dma_read_data_tvalid),
+      .m_axis_tready(dma_read_data_tready),
+      .m_axis_tlast(dma_read_data_tlast),
+      .m_axis_tid(dma_read_data_tid),
+      .m_axis_tdest(),
+      .m_axis_tuser()
+  );
+
+  axis_register #(
+      .DATA_WIDTH(AxisDataWidth),
+      .KEEP_ENABLE(1),
+      .KEEP_WIDTH(AxisKeepWidth),
+      .LAST_ENABLE(1),
+      .ID_ENABLE(1),
+      .ID_WIDTH(DecoderIdxWidth),
+      .DEST_ENABLE(0),
+      .USER_ENABLE(0),
+      .USER_WIDTH(1),
+      .REG_TYPE(2)
+  ) dma_write_data_reg (
+      .clk(clk),
+      .rst(rst || mmio_reset_pulse),
+      .s_axis_tdata(dma_write_data_tdata),
+      .s_axis_tkeep(dma_write_data_tkeep),
+      .s_axis_tvalid(dma_write_data_tvalid),
+      .s_axis_tready(dma_write_data_tready),
+      .s_axis_tlast(dma_write_data_tlast),
+      .s_axis_tid(dma_write_data_tid),
+      .s_axis_tdest(),
+      .s_axis_tuser(1'b0),
+      .m_axis_tdata(dma_write_data_reg_tdata),
+      .m_axis_tkeep(dma_write_data_reg_tkeep),
+      .m_axis_tvalid(dma_write_data_reg_tvalid),
+      .m_axis_tready(dma_write_data_reg_tready),
+      .m_axis_tlast(dma_write_data_reg_tlast),
+      .m_axis_tid(dma_write_data_reg_tid),
+      .m_axis_tdest(),
+      .m_axis_tuser()
   );
 
   // DMA read data routing from DMA engine to input FIFO
