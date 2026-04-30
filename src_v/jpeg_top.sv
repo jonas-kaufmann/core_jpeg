@@ -968,8 +968,18 @@ AxisKeepWidth + 1
   genvar g;
   generate
     for (g = 0; g < JPEG_NUM_DECODERS; g = g + 1) begin : gen_decoder
-      wire  decoder_clk;
+      wire decoder_clk;
       logic decoder_clk_en;
+      logic [AxisDataWidth-1:0] input_fifo_reg_tdata;
+      logic [AxisKeepWidth-1:0] input_fifo_reg_tkeep;
+      logic input_fifo_reg_tvalid;
+      logic input_fifo_reg_tready;
+      logic input_fifo_reg_tlast;
+      logic [AxisDataWidth-1:0] output_fifo_reg_tdata;
+      logic [AxisKeepWidth-1:0] output_fifo_reg_tkeep;
+      logic output_fifo_reg_tvalid;
+      logic output_fifo_reg_tready;
+      logic output_fifo_reg_tlast;
 
       // Each decoder gets private input/output buffering and a dedicated core instance. When MMIO
       // clock gating is enabled, gate this island only while the slot is idle. Force the clock on
@@ -982,6 +992,37 @@ AxisKeepWidth + 1
           .I (clk),
           .CE(decoder_clk_en),
           .O (decoder_clk)
+      );
+
+      axis_register #(
+          .DATA_WIDTH(AxisDataWidth),
+          .KEEP_ENABLE(1),
+          .KEEP_WIDTH(AxisKeepWidth),
+          .LAST_ENABLE(1),
+          .ID_ENABLE(0),
+          .DEST_ENABLE(0),
+          .USER_ENABLE(0),
+          .USER_WIDTH(1),
+          .REG_TYPE(2)
+      ) input_fifo_reg (
+          .clk(decoder_clk),
+          .rst(core_rst[g]),
+          .s_axis_tdata(input_fifo_tdata[g]),
+          .s_axis_tkeep(input_fifo_tkeep[g]),
+          .s_axis_tvalid(input_fifo_tvalid[g]),
+          .s_axis_tready(input_fifo_tready[g]),
+          .s_axis_tlast(input_fifo_tlast[g]),
+          .s_axis_tid(),
+          .s_axis_tdest(),
+          .s_axis_tuser(1'b0),
+          .m_axis_tdata(input_fifo_reg_tdata),
+          .m_axis_tkeep(input_fifo_reg_tkeep),
+          .m_axis_tvalid(input_fifo_reg_tvalid),
+          .m_axis_tready(input_fifo_reg_tready),
+          .m_axis_tlast(input_fifo_reg_tlast),
+          .m_axis_tid(),
+          .m_axis_tdest(),
+          .m_axis_tuser()
       );
 
       axis_fifo #(
@@ -999,11 +1040,11 @@ AxisKeepWidth + 1
       ) input_fifo (
           .clk(decoder_clk),
           .rst(core_rst[g]),
-          .s_axis_tdata(input_fifo_tdata[g]),
-          .s_axis_tkeep(input_fifo_tkeep[g]),
-          .s_axis_tvalid(input_fifo_tvalid[g]),
-          .s_axis_tready(input_fifo_tready[g]),
-          .s_axis_tlast(input_fifo_tlast[g]),
+          .s_axis_tdata(input_fifo_reg_tdata),
+          .s_axis_tkeep(input_fifo_reg_tkeep),
+          .s_axis_tvalid(input_fifo_reg_tvalid),
+          .s_axis_tready(input_fifo_reg_tready),
+          .s_axis_tlast(input_fifo_reg_tlast),
           .s_axis_tid(),
           .s_axis_tdest(),
           .s_axis_tuser(),
@@ -1058,7 +1099,7 @@ AxisKeepWidth + 1
           .USER_ENABLE(0),
           .USER_WIDTH(1),
           .RAM_PIPELINE(1),
-          .OUTPUT_FIFO_ENABLE(0)
+          .OUTPUT_FIFO_ENABLE(1)
       ) output_fifo (
           .clk(decoder_clk),
           .rst(core_rst[g]),
@@ -1070,11 +1111,11 @@ AxisKeepWidth + 1
           .s_axis_tid(),
           .s_axis_tdest(),
           .s_axis_tuser(1'b0),
-          .m_axis_tdata(output_fifo_tdata[g]),
-          .m_axis_tkeep(output_fifo_tkeep[g]),
-          .m_axis_tvalid(output_fifo_tvalid[g]),
-          .m_axis_tready(output_fifo_tready[g]),
-          .m_axis_tlast(output_fifo_tlast[g]),
+          .m_axis_tdata(output_fifo_reg_tdata),
+          .m_axis_tkeep(output_fifo_reg_tkeep),
+          .m_axis_tvalid(output_fifo_reg_tvalid),
+          .m_axis_tready(output_fifo_reg_tready),
+          .m_axis_tlast(output_fifo_reg_tlast),
           .m_axis_tid(),
           .m_axis_tdest(),
           .m_axis_tuser(),
@@ -1085,6 +1126,37 @@ AxisKeepWidth + 1
           .status_overflow(),
           .status_bad_frame(),
           .status_good_frame()
+      );
+
+      axis_register #(
+          .DATA_WIDTH(AxisDataWidth),
+          .KEEP_ENABLE(1),
+          .KEEP_WIDTH(AxisKeepWidth),
+          .LAST_ENABLE(1),
+          .ID_ENABLE(0),
+          .DEST_ENABLE(0),
+          .USER_ENABLE(0),
+          .USER_WIDTH(1),
+          .REG_TYPE(2)
+      ) output_fifo_reg (
+          .clk(decoder_clk),
+          .rst(core_rst[g]),
+          .s_axis_tdata(output_fifo_reg_tdata),
+          .s_axis_tkeep(output_fifo_reg_tkeep),
+          .s_axis_tvalid(output_fifo_reg_tvalid),
+          .s_axis_tready(output_fifo_reg_tready),
+          .s_axis_tlast(output_fifo_reg_tlast),
+          .s_axis_tid(),
+          .s_axis_tdest(),
+          .s_axis_tuser(1'b0),
+          .m_axis_tdata(output_fifo_tdata[g]),
+          .m_axis_tkeep(output_fifo_tkeep[g]),
+          .m_axis_tvalid(output_fifo_tvalid[g]),
+          .m_axis_tready(output_fifo_tready[g]),
+          .m_axis_tlast(output_fifo_tlast[g]),
+          .m_axis_tid(),
+          .m_axis_tdest(),
+          .m_axis_tuser()
       );
     end
   endgenerate
